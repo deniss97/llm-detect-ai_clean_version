@@ -1,0 +1,10 @@
+.git
+.idea
+.venv
+__pycache__
+*.pyc
+
+data
+hf-cache
+
+.env

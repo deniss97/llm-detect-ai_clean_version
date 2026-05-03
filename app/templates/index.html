@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>AI Text Detector</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+<main class="container">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">ВКР · сервис идентификации AI-текстов</p>
+            <h1>Проверка текста по изображению</h1>
+            <p class="subtitle">
+                Загрузите фото/скан сочинения, проверьте распознанный текст,
+                при необходимости исправьте OCR-ошибки и запустите детекцию.
+            </p>
+        </div>
+        <div class="status">
+            <span>Порог:</span>
+            <strong>{{ threshold }}</strong>
+            <span>Детектор:</span>
+            <strong>{{ detector_mode }}</strong>
+        </div>
+    </header>
+
+    <section class="card">
+        <h2>1. Загрузка изображения</h2>
+        <form id="ocrForm">
+            <input id="imageInput" type="file" name="image" accept="image/*" required>
+            <button type="submit">Распознать текст</button>
+        </form>
+        <p id="ocrStatus" class="muted"></p>
+    </section>
+
+    <section class="card">
+        <h2>2. Распознанный текст</h2>
+        <textarea id="textInput" rows="12" placeholder="Здесь появится текст после OCR. Его можно отредактировать перед проверкой."></textarea>
+        <div class="actions">
+            <button id="detectBtn">Проверить на AI-генерацию</button>
+            <button id="clearBtn" class="secondary">Очистить</button>
+        </div>
+    </section>
+
+    <section id="resultCard" class="card result hidden">
+        <h2>3. Результат</h2>
+        <div class="result-grid">
+            <div>
+                <p class="muted">Вердикт</p>
+                <h3 id="verdict"></h3>
+            </div>
+            <div>
+                <p class="muted">Процент AI-генерации</p>
+                <h3 id="percent"></h3>
+            </div>
+            <div>
+                <p class="muted">ID записи в БД</p>
+                <h3 id="resultId"></h3>
+            </div>
+        </div>
+        <div class="bar">
+            <div id="barFill"></div>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>История последних проверок</h2>
+        <div id="history" class="history"></div>
+    </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

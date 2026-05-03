@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Hugging Face / ML artifacts
+hf-cache/
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.onnx
+
+# Keep large trained/local model artifacts out of git by default.
+models/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Docker / logs
+*.log
