@@ -55,7 +55,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "TeacherDemo!2026",
+          "value": "teacher",
           "temporary": false
         }
       ],
@@ -73,7 +73,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "TeacherDemo!2026",
+          "value": "teacher",
           "temporary": false
         }
       ],
@@ -91,7 +91,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "AdminDemo!2026",
+          "value": "admin",
           "temporary": false
         }
       ],

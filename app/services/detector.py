@@ -77,6 +77,36 @@ def prepare_peft_adapter_path(adapter_path: str) -> str:
     return str(fixed_dir)
 
 
+def detect_adapter_num_labels(adapter_path: str | None) -> int | None:
+    """Infer sequence-classification head size saved inside a PEFT adapter."""
+
+    if not adapter_path:
+        return None
+
+    weights_path = Path(adapter_path) / "adapter_model.safetensors"
+    if not weights_path.exists():
+        return None
+
+    try:
+        from safetensors.torch import load_file
+    except Exception:
+        logger.exception("Не удалось импортировать safetensors для определения num_labels adapter.")
+        return None
+
+    state_dict = load_file(str(weights_path), device="cpu")
+    for key in [
+        "base_model.model.score.weight",
+        "base_model.model.classification_head.weight",
+    ]:
+        weight = state_dict.get(key)
+        if weight is not None and len(weight.shape) == 2:
+            num_labels = int(weight.shape[0])
+            logger.info("PEFT adapter classification head: %s shape=%s", key, tuple(weight.shape))
+            return num_labels
+
+    return None
+
+
 class Detector(Protocol):
     mode: str
 
@@ -201,6 +231,13 @@ class TransformerDetector:
             "Загружаем base model %s. Первый запуск может долго скачивать веса...",
             settings.model_base_path,
         )
+        adapter_num_labels = detect_adapter_num_labels(settings.lora_adapter_path)
+        if adapter_num_labels is not None:
+            kwargs["num_labels"] = adapter_num_labels
+            logger.info(
+                "Создаём base model с num_labels=%s, чтобы совпасть с PEFT adapter.",
+                adapter_num_labels,
+            )
         self.model = AutoModelForSequenceClassification.from_pretrained(
             settings.model_base_path,
             **hub_kwargs,
@@ -228,11 +265,13 @@ class TransformerDetector:
         self.model.eval()
         self.max_length = settings.model_max_length
         self.ai_class_index = settings.ai_class_index
+        self.invert_probability = settings.model_invert_probability
         logger.info(
-            "Детектор готов: mode=%s, max_length=%s, ai_class_index=%s",
+            "Детектор готов: mode=%s, max_length=%s, ai_class_index=%s, invert_probability=%s",
             self.mode,
             self.max_length,
             self.ai_class_index,
+            self.invert_probability,
         )
 
     def predict_probability(self, text: str) -> float:
@@ -257,6 +296,8 @@ class TransformerDetector:
 
         if math.isnan(prob):
             raise RuntimeError("Модель вернула NaN.")
+        if self.invert_probability:
+            prob = 1.0 - prob
         return float(max(0.0, min(1.0, prob)))
 
 

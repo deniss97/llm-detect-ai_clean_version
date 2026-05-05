@@ -37,3 +37,59 @@ def recognize_image(image_bytes: bytes, lang: str = "rus+eng") -> str:
         ) from exc
 
     return _cleanup_text(raw_text)
+
+
+def recognize_pdf(
+    pdf_bytes: bytes,
+    lang: str = "rus+eng",
+    max_pages: int = 20,
+    render_dpi: int = 200,
+) -> str:
+    """OCR для PDF: рендерим страницы в изображения и распознаём Tesseract."""
+
+    if not pdf_bytes:
+        raise ValueError("Пустой PDF-файл.")
+
+    try:
+        import fitz
+    except ImportError as exc:
+        raise RuntimeError("Установите зависимость pymupdf для OCR PDF-файлов.") from exc
+
+    try:
+        document = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        raise ValueError("Не удалось открыть PDF-файл.") from exc
+
+    try:
+        if document.page_count == 0:
+            raise ValueError("PDF-файл не содержит страниц.")
+        if document.page_count > max_pages:
+            raise ValueError(f"PDF слишком длинный. Максимум страниц: {max_pages}.")
+
+        embedded_texts = []
+        for page_index in range(document.page_count):
+            page_text = document.load_page(page_index).get_text("text")
+            page_text = _cleanup_text(page_text)
+            if page_text:
+                embedded_texts.append(page_text)
+        embedded_text = _cleanup_text("\n\n".join(embedded_texts))
+        if len(embedded_text) >= 20:
+            return embedded_text
+
+        zoom = max(render_dpi, 72) / 72
+        matrix = fitz.Matrix(zoom, zoom)
+        page_texts = []
+
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            text = recognize_image(pixmap.tobytes("png"), lang=lang)
+            if text:
+                page_texts.append(f"Страница {page_index + 1}\n{text}")
+
+        result = "\n\n".join(page_texts)
+        if not result:
+            raise ValueError("Не удалось распознать текст в PDF.")
+        return _cleanup_text(result)
+    finally:
+        document.close()

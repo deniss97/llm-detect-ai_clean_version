@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     threshold: float = 0.73
     max_text_length: int = 20_000
     upload_max_bytes: int = 8 * 1024 * 1024
+    pdf_max_pages: int = 20
+    pdf_render_dpi: int = 200
 
     # true — безопасная заглушка, false — загрузка реальной модели
     use_mock_detector: bool = True
@@ -17,6 +19,7 @@ class Settings(BaseSettings):
     load_in_4bit: bool = True
     model_max_length: int = 256
     ai_class_index: int = 1
+    model_invert_probability: bool = False
     allow_cpu_model_load: bool = False
     model_local_files_only: bool = False
     hugging_face_hub_token: str | None = None

@@ -40,7 +40,7 @@ from app.schemas import (
     UserResponse,
 )
 from app.services.detector import Detector, build_detector
-from app.services.ocr import recognize_image
+from app.services.ocr import recognize_image, recognize_pdf
 
 
 logging.basicConfig(level=logging.INFO)
@@ -602,22 +602,30 @@ def get_journal(
     class_id: int,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
-    days: int = 30,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ):
     school_class = require_class_access(db, class_id, user)
-    days = max(7, min(days, 180))
-    date_from = date.today() - timedelta(days=days - 1)
+    if date_to is None:
+        date_to = date.today()
+    if date_from is None:
+        date_from = date_to - timedelta(days=13)
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="Дата начала периода позже даты конца.")
+    if (date_to - date_from).days > 366:
+        raise HTTPException(status_code=400, detail="Период журнала не должен превышать 1 год.")
 
     grades = (
         db.query(GradeEntry)
         .filter(GradeEntry.class_id == school_class.id)
         .filter(GradeEntry.work_date >= date_from)
+        .filter(GradeEntry.work_date <= date_to)
         .order_by(GradeEntry.work_date, GradeEntry.created_at)
         .all()
     )
-    visible_dates = sorted({row.work_date for row in grades})
+    visible_dates = sorted({row.work_date for row in grades if date_from <= row.work_date <= date_to})
     if not visible_dates:
-        visible_dates = [date.today()]
+        visible_dates = [date_from, date_to] if date_from != date_to else [date_from]
 
     students = sorted(school_class.students, key=lambda item: item.full_name)
     student_rows = []
@@ -648,15 +656,29 @@ async def ocr_image(
     image: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
 ):
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Загрузите файл изображения.")
-
-    image_bytes = await image.read()
-    if len(image_bytes) > settings.upload_max_bytes:
+    file_bytes = await image.read()
+    if len(file_bytes) > settings.upload_max_bytes:
         raise HTTPException(status_code=413, detail="Файл слишком большой.")
 
+    content_type = image.content_type or ""
+    filename = (image.filename or "").lower()
+    is_pdf = content_type == "application/pdf" or filename.endswith(".pdf")
+    is_image = content_type.startswith("image/") or filename.endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+    )
+    if not is_pdf and not is_image:
+        raise HTTPException(status_code=400, detail="Загрузите изображение или PDF-файл.")
+
     try:
-        text = recognize_image(image_bytes, lang=settings.ocr_lang)
+        if is_pdf:
+            text = recognize_pdf(
+                file_bytes,
+                lang=settings.ocr_lang,
+                max_pages=settings.pdf_max_pages,
+                render_dpi=settings.pdf_render_dpi,
+            )
+        else:
+            text = recognize_image(file_bytes, lang=settings.ocr_lang)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

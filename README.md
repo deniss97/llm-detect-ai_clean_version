@@ -1,6 +1,6 @@
 # Веб-сервис детекции AI-сгенерированных текстов
 
-1. загрузка изображения с текстом;
+1. загрузка изображения или PDF с текстом;
 2. OCR-распознавание в текстовый формат;
 3. ручное редактирование распознанного текста;
 4. запуск модели детекции;
@@ -24,6 +24,8 @@ macOS:
 ```bash
 brew install tesseract tesseract-lang
 ```
+
+PDF-файлы распознаются постранично: приложение рендерит страницы в изображения и затем запускает Tesseract. Ограничения задаются переменными `PDF_MAX_PAGES` и `PDF_RENDER_DPI`.
 
 ### 2. Установите зависимости
 
@@ -66,9 +68,9 @@ Swagger API: http://127.0.0.1:8000/docs
 
 Демо-пользователи:
 
-- `demo.teacher` / `TeacherDemo!2026` - роль `teacher`, видит класс `8А`;
-- `second.teacher` / `TeacherDemo!2026` - роль `teacher`, видит класс `9Б`;
-- `admin.teacher` / `AdminDemo!2026` - роль `admin`, видит все классы.
+- `demo.teacher` / `teacher` - роль `teacher`, видит класс `8А`;
+- `second.teacher` / `teacher` - роль `teacher`, видит класс `9Б`;
+- `admin.teacher` / `admin` - роль `admin`, видит все классы.
 
 Админка Keycloak: http://localhost:8080/admin, логин `admin`, пароль `admin`.
 

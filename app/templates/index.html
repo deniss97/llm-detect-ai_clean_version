@@ -4,18 +4,16 @@
     <meta charset="utf-8">
     <title>AI Text Detector</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/static/style.css?v=3" rel="stylesheet">
+    <link href="/static/style.css?v=8" rel="stylesheet">
 </head>
 <body data-threshold="{{ threshold }}">
 <main class="container">
     <header class="hero">
-        <div>
-            <p class="eyebrow">ВКР · сервис идентификации AI-текстов</p>
-            <h1>Проверка текста по изображению</h1>
-            <p class="subtitle">
-                Загрузите фото/скан сочинения, проверьте распознанный текст,
-                при необходимости исправьте OCR-ошибки и запустите детекцию.
-            </p>
+        <div class="app-title">
+            <div>
+                <h1>Детектор сочинений</h1>
+                <p class="subtitle">OCR, проверка текста и журнал оценок</p>
+            </div>
         </div>
         <div class="hero-aside">
             <details class="account-menu">
@@ -31,12 +29,6 @@
                     <a href="/logout">Выйти</a>
                 </div>
             </details>
-            <div class="status">
-                <span>Порог:</span>
-                <strong>{{ threshold }}</strong>
-                <span>Детектор:</span>
-                <strong>{{ detector_mode }}</strong>
-            </div>
         </div>
     </header>
 
@@ -47,9 +39,9 @@
 
     <section id="checkTab" class="tab-panel active">
         <section class="card">
-            <h2>1. Загрузка изображения</h2>
+            <h2>1. Загрузка файла</h2>
             <form id="ocrForm">
-                <input id="imageInput" type="file" name="image" accept="image/*" required>
+                <input id="imageInput" type="file" name="image" accept="image/*,application/pdf,.pdf" required>
                 <button type="submit">Распознать текст</button>
             </form>
             <p id="ocrStatus" class="muted"></p>
@@ -125,31 +117,33 @@
             <p id="saveStatus" class="muted"></p>
         </section>
 
-        <section class="card">
-            <h2>История последних проверок</h2>
-            <div id="history" class="history"></div>
-        </section>
     </section>
 
     <section id="journalTab" class="tab-panel">
         <section class="card">
             <div class="journal-toolbar">
                 <h2>Журнал</h2>
-                <div class="toolbar-controls">
+            </div>
+            <div class="journal-filters">
+                <label>
+                    Класс
                     <select id="journalClassSelect"></select>
-                    <select id="journalDaysSelect">
-                        <option value="14">14 дней</option>
-                        <option value="30" selected>30 дней</option>
-                        <option value="90">90 дней</option>
-                        <option value="180">180 дней</option>
-                    </select>
-                </div>
+                </label>
+                <label>
+                    С даты
+                    <input id="journalDateFromInput" type="date">
+                </label>
+                <label>
+                    По дату
+                    <input id="journalDateToInput" type="date">
+                </label>
             </div>
             <div class="legend">
                 <span><i class="risk-high"></i> высокий процент генерации</span>
                 <span><i class="risk-medium"></i> возможна генерация</span>
                 <span><i class="risk-low"></i> генерации не обнаружено</span>
             </div>
+            <h3 class="section-title">Добавить оценку</h3>
             <form id="manualGradeForm" class="manual-grade-form">
                 <label>
                     Ученик
@@ -195,6 +189,6 @@
     <div id="dialogBody"></div>
 </dialog>
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=8"></script>
 </body>
 </html>

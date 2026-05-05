@@ -10,7 +10,6 @@ const verdictEl = document.getElementById("verdict");
 const percentEl = document.getElementById("percent");
 const resultIdEl = document.getElementById("resultId");
 const barFill = document.getElementById("barFill");
-const historyEl = document.getElementById("history");
 const saveGradeForm = document.getElementById("saveGradeForm");
 const classSelect = document.getElementById("classSelect");
 const studentSelect = document.getElementById("studentSelect");
@@ -23,7 +22,8 @@ const saveStatus = document.getElementById("saveStatus");
 const accountName = document.getElementById("accountName");
 const accountLogin = document.getElementById("accountLogin");
 const journalClassSelect = document.getElementById("journalClassSelect");
-const journalDaysSelect = document.getElementById("journalDaysSelect");
+const journalDateFromInput = document.getElementById("journalDateFromInput");
+const journalDateToInput = document.getElementById("journalDateToInput");
 const journalEl = document.getElementById("journal");
 const manualGradeForm = document.getElementById("manualGradeForm");
 const manualStudentSelect = document.getElementById("manualStudentSelect");
@@ -66,6 +66,12 @@ function todayIso() {
     return new Date().toISOString().slice(0, 10);
 }
 
+function addDaysIso(value, days) {
+    const date = new Date(`${value}T00:00:00`);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+}
+
 async function initAuth() {
     const response = await fetch("/api/auth/config");
     authConfig = await response.json();
@@ -100,13 +106,13 @@ ocrForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
     if (!imageInput.files.length) {
-        showError("Выберите изображение.");
+        showError("Выберите изображение или PDF-файл.");
         return;
     }
 
     const formData = new FormData();
     formData.append("image", imageInput.files[0]);
-    setLoading(ocrStatus, "Распознаём изображение...");
+    setLoading(ocrStatus, "Распознаём файл...");
 
     try {
         const response = await apiFetch("/api/ocr", {
@@ -152,7 +158,6 @@ detectBtn.addEventListener("click", async () => {
 
         currentResult = data;
         renderResult(data);
-        await loadHistory();
     } catch (error) {
         showError(error.message);
     } finally {
@@ -172,7 +177,8 @@ journalClassSelect.addEventListener("change", () => {
     fillManualStudents(journalClassSelect.value);
     loadJournal();
 });
-journalDaysSelect.addEventListener("change", loadJournal);
+journalDateFromInput.addEventListener("change", loadJournal);
+journalDateToInput.addEventListener("change", loadJournal);
 closeDialogBtn.addEventListener("click", () => essayDialog.close());
 
 saveGradeForm.addEventListener("submit", async (event) => {
@@ -284,37 +290,21 @@ function fillManualStudents(classId) {
         .join("");
 }
 
-async function loadHistory() {
-    const response = await apiFetch("/api/results?limit=10");
-    const items = await response.json();
-
-    if (!items.length) {
-        historyEl.innerHTML = `<p class="muted">Пока нет сохранённых результатов.</p>`;
-        return;
-    }
-
-    historyEl.innerHTML = items.map((item) => {
-        const shortText = item.text.length > 160 ? item.text.slice(0, 160) + "..." : item.text;
-        const verdict = item.verdict === "AI_GENERATED" ? "AI" : "Human";
-        return `
-            <article class="history-item">
-                <div>
-                    <strong>#${item.id} · ${verdict} · ${item.ai_percent.toFixed(2)}%</strong>
-                    <p>${escapeHtml(shortText)}</p>
-                </div>
-                <time>${new Date(item.created_at).toLocaleString("ru-RU")}</time>
-            </article>
-        `;
-    }).join("");
-}
-
 async function loadJournal() {
     if (!journalClassSelect.value) {
         journalEl.innerHTML = `<p class="muted">Нет доступных классов.</p>`;
         return;
     }
+    if (!journalDateFromInput.value || !journalDateToInput.value) {
+        journalEl.innerHTML = `<p class="muted">Выберите период журнала.</p>`;
+        return;
+    }
 
-    const response = await apiFetch(`/api/journal/${journalClassSelect.value}?days=${journalDaysSelect.value}`);
+    const params = new URLSearchParams({
+        date_from: journalDateFromInput.value,
+        date_to: journalDateToInput.value,
+    });
+    const response = await apiFetch(`/api/journal/${journalClassSelect.value}?${params.toString()}`);
     const data = await response.json();
     if (!response.ok) {
         journalEl.innerHTML = `<p class="muted">${escapeHtml(data.detail || "Журнал недоступен.")}</p>`;
@@ -326,14 +316,14 @@ async function loadJournal() {
 
 function renderJournal(data) {
     const dates = data.dates;
-    const header = dates.map((day) => `<th>${formatDate(day)}</th>`).join("");
+    const header = dates.map((day) => `<th class="date-heading">${formatDate(day)}</th>`).join("");
     const rows = data.students.map((student) => {
         const cells = dates.map((day) => {
             const grades = student.grades.filter((grade) => grade.work_date === day);
             if (!grades.length) {
-                return "<td></td>";
+                return `<td class="grade-cell empty"></td>`;
             }
-            return `<td>${grades.map(renderGradeBadge).join("")}</td>`;
+            return `<td class="grade-cell"><div class="grade-stack">${grades.map(renderGradeBadge).join("")}</div></td>`;
         }).join("");
         const avg = student.average_grade === null ? "" : formatAverage(student.average_grade);
         return `
@@ -352,7 +342,7 @@ function renderJournal(data) {
                     <tr>
                         <th class="student-name">Ученик</th>
                         ${header}
-                        <th>Средний балл</th>
+                        <th class="average-heading">Средний балл</th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
@@ -448,9 +438,10 @@ function escapeHtml(value) {
 async function init() {
     workDateInput.value = todayIso();
     manualWorkDateInput.value = todayIso();
+    journalDateToInput.value = todayIso();
+    journalDateFromInput.value = addDaysIso(todayIso(), -13);
     await initAuth();
     await loadClasses();
-    await loadHistory();
     await loadJournal();
 }
 
