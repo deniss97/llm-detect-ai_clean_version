@@ -1,13 +1,38 @@
 services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: ai-detector-keycloak
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "8080:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+    volumes:
+      - ./keycloak/realm-school.json:/opt/keycloak/data/import/realm-school.json:ro
+      - keycloak-data:/opt/keycloak/data
+
   ai-detector-web:
     build: .
     container_name: ai-detector-web
     ports:
       - "8000:8000"
+    depends_on:
+      - keycloak
     gpus: all
     env_file:
       - .env
     environment:
+      AUTH_ENABLED: "true"
+      KEYCLOAK_PUBLIC_BASE_URL: "http://localhost:8080"
+      KEYCLOAK_INTERNAL_BASE_URL: "http://keycloak:8080"
+      KEYCLOAK_REALM: "school"
+      KEYCLOAK_CLIENT_ID: "ai-detector-web"
+      KEYCLOAK_AUDIENCE: ""
+      ADMIN_USERNAMES: "admin.teacher,admin.teacher@example.test"
       HF_HOME: /root/.cache/huggingface
       HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
       HF_HUB_DISABLE_XET: "1"
@@ -16,3 +41,6 @@ services:
       - ./data:/app/data
       - ./hf-cache:/root/.cache/huggingface
       - ./models:/app/models
+
+volumes:
+  keycloak-data:

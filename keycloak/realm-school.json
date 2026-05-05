@@ -1,0 +1,104 @@
+{
+  "realm": "school",
+  "enabled": true,
+  "displayName": "School Journal",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "teacher",
+        "description": "Teacher can see only classes assigned to their username."
+      },
+      {
+        "name": "admin",
+        "description": "Admin can see all classes."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ai-detector-web",
+      "name": "AI Detector Web",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/*##http://127.0.0.1:8000/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "demo.teacher",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Teacher",
+      "email": "demo.teacher@example.test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TeacherDemo!2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "teacher"
+      ]
+    },
+    {
+      "username": "second.teacher",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Second",
+      "lastName": "Teacher",
+      "email": "second.teacher@example.test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TeacherDemo!2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "teacher"
+      ]
+    },
+    {
+      "username": "admin.teacher",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "Teacher",
+      "email": "admin.teacher@example.test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "AdminDemo!2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin",
+        "teacher"
+      ]
+    }
+  ]
+}

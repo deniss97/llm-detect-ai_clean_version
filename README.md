@@ -6,6 +6,7 @@
 4. запуск модели детекции;
 5. вывод процента AI-генерации;
 6. сохранение результата в БД: `id`, `text`, `ai_probability`, `verdict`, `created_at`.
+7. сохранение сочинения в журнал класса с оценкой, типом работы и цветовой пометкой риска AI-генерации.
 
 ## Быстрый запуск без Docker
 
@@ -42,6 +43,66 @@ uvicorn app.main:app --reload
 Откройте: http://127.0.0.1:8000
 
 Swagger API: http://127.0.0.1:8000/docs
+
+## Журнал и роли
+
+Во вкладке `Журнал` оценки отображаются таблицей по датам. Для сочинений цвет оценки зависит от процента AI-генерации:
+
+- красный: `>= THRESHOLD * 100`, высокий риск генерации;
+- жёлтый: от `40%` до порога, возможна генерация;
+- зелёный: ниже `40%`, генерация не обнаружена.
+
+Наведение на оценку показывает тип работы и комментарий. Клик по оценке сочинения открывает окно с оцифровкой текста и результатами модели. Для длинного периода есть выбор диапазона `14/30/90/180 дней`, таблица прокручивается горизонтально и считает средний балл.
+
+Обычные оценки можно добавлять прямо из вкладки журнала: ответ на уроке, диктант, контрольная или другая работа. Такие оценки отображаются нейтральным цветом, потому что к ним не привязан результат AI-детекции.
+
+Без авторизации приложение работает от имени демо-учителя `DEMO_TEACHER_USERNAME=demo.teacher` и показывает только его классы. При включённом Keycloak открытие http://127.0.0.1:8000 сразу перенаправляет на страницу входа Keycloak. После успешного входа backend сохраняет сессию в cookie, в правом верхнем углу UI показывает аккаунт пользователя и даёт выйти через меню аккаунта.
+
+Учитель видит только классы, где `school_classes.teacher_username` совпадает с `preferred_username` из JWT. Пользователь с ролью `ADMIN_ROLE` видит все классы.
+
+## Keycloak
+
+В Docker Keycloak поднимается отдельным сервисом `keycloak` на http://localhost:8080. Realm импортируется из `keycloak/realm-school.json`.
+
+Демо-пользователи:
+
+- `demo.teacher` / `TeacherDemo!2026` - роль `teacher`, видит класс `8А`;
+- `second.teacher` / `TeacherDemo!2026` - роль `teacher`, видит класс `9Б`;
+- `admin.teacher` / `AdminDemo!2026` - роль `admin`, видит все классы.
+
+Админка Keycloak: http://localhost:8080/admin, логин `admin`, пароль `admin`.
+
+При ручной настройке Keycloak:
+
+1. Создайте realm `school` и public client `ai-detector-web` для браузерного входа по Authorization Code + PKCE.
+2. В настройках клиента добавьте `Valid redirect URIs`, например:
+
+```text
+http://127.0.0.1:8000/*
+```
+
+3. Добавьте Web origins для адреса приложения, например:
+
+```text
+http://127.0.0.1:8000
+```
+
+4. В `.env` включите авторизацию:
+
+```env
+AUTH_ENABLED=true
+KEYCLOAK_PUBLIC_BASE_URL="http://localhost:8080"
+KEYCLOAK_INTERNAL_BASE_URL="http://keycloak:8080"
+KEYCLOAK_REALM="school"
+KEYCLOAK_CLIENT_ID="ai-detector-web"
+ADMIN_ROLE="admin"
+ADMIN_USERNAMES="admin.teacher,admin.teacher@example.test"
+TEACHER_ROLE="teacher"
+```
+
+`KEYCLOAK_PUBLIC_BASE_URL` нужен браузеру для редиректа на страницу входа. `KEYCLOAK_INTERNAL_BASE_URL` нужен backend-контейнеру, чтобы скачать JWKS-ключи Keycloak внутри docker compose сети.
+
+По умолчанию `KEYCLOAK_AUDIENCE` пустой, поэтому backend не проверяет `aud` в access token. Если хотите строгую проверку audience, настройте audience mapper в Keycloak и укажите значение в `KEYCLOAK_AUDIENCE`.
 
 ## Подключение реальной модели детекции
 

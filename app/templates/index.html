@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <title>AI Text Detector</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/static/style.css" rel="stylesheet">
+    <link href="/static/style.css?v=3" rel="stylesheet">
 </head>
-<body>
+<body data-threshold="{{ threshold }}">
 <main class="container">
     <header class="hero">
         <div>
@@ -17,59 +17,184 @@
                 при необходимости исправьте OCR-ошибки и запустите детекцию.
             </p>
         </div>
-        <div class="status">
-            <span>Порог:</span>
-            <strong>{{ threshold }}</strong>
-            <span>Детектор:</span>
-            <strong>{{ detector_mode }}</strong>
+        <div class="hero-aside">
+            <details class="account-menu">
+                <summary>
+                    <span class="account-avatar">{{ (current_user.display_name if current_user else "D")[:1] }}</span>
+                    <span>
+                        <span class="account-label">Аккаунт</span>
+                        <strong id="accountName">{{ current_user.display_name if current_user else "demo.teacher" }}</strong>
+                    </span>
+                </summary>
+                <div class="account-dropdown">
+                    <p id="accountLogin">{{ current_user.username if current_user else "demo.teacher" }}</p>
+                    <a href="/logout">Выйти</a>
+                </div>
+            </details>
+            <div class="status">
+                <span>Порог:</span>
+                <strong>{{ threshold }}</strong>
+                <span>Детектор:</span>
+                <strong>{{ detector_mode }}</strong>
+            </div>
         </div>
     </header>
 
-    <section class="card">
-        <h2>1. Загрузка изображения</h2>
-        <form id="ocrForm">
-            <input id="imageInput" type="file" name="image" accept="image/*" required>
-            <button type="submit">Распознать текст</button>
-        </form>
-        <p id="ocrStatus" class="muted"></p>
+    <nav class="tabs" aria-label="Разделы">
+        <button class="tab active" data-tab="checkTab">Проверка сочинения</button>
+        <button class="tab" data-tab="journalTab">Журнал</button>
+    </nav>
+
+    <section id="checkTab" class="tab-panel active">
+        <section class="card">
+            <h2>1. Загрузка изображения</h2>
+            <form id="ocrForm">
+                <input id="imageInput" type="file" name="image" accept="image/*" required>
+                <button type="submit">Распознать текст</button>
+            </form>
+            <p id="ocrStatus" class="muted"></p>
+        </section>
+
+        <section class="card">
+            <h2>2. Распознанный текст</h2>
+            <textarea id="textInput" rows="12" placeholder="Здесь появится текст после OCR. Его можно отредактировать перед проверкой."></textarea>
+            <div class="actions">
+                <button id="detectBtn">Проверить на AI-генерацию</button>
+                <button id="clearBtn" class="secondary">Очистить</button>
+            </div>
+        </section>
+
+        <section id="resultCard" class="card result hidden">
+            <h2>3. Результат и сохранение</h2>
+            <div class="result-grid">
+                <div>
+                    <p class="muted">Вердикт</p>
+                    <h3 id="verdict"></h3>
+                </div>
+                <div>
+                    <p class="muted">Процент AI-генерации</p>
+                    <h3 id="percent"></h3>
+                </div>
+                <div>
+                    <p class="muted">ID записи в БД</p>
+                    <h3 id="resultId"></h3>
+                </div>
+            </div>
+            <div class="bar">
+                <div id="barFill"></div>
+            </div>
+
+            <form id="saveGradeForm" class="save-grid">
+                <label>
+                    Класс
+                    <select id="classSelect" required></select>
+                </label>
+                <label>
+                    Ученик
+                    <select id="studentSelect" required></select>
+                </label>
+                <label>
+                    Вид работы
+                    <select id="workTypeSelect">
+                        <option value="essay">Сочинение</option>
+                        <option value="lesson_answer">Ответ на уроке</option>
+                        <option value="dictation">Диктант</option>
+                        <option value="test">Контрольная</option>
+                    </select>
+                </label>
+                <label>
+                    Дата
+                    <input id="workDateInput" type="date" required>
+                </label>
+                <label>
+                    Оценка
+                    <select id="gradeSelect" required>
+                        <option value="5">5</option>
+                        <option value="4">4</option>
+                        <option value="3">3</option>
+                        <option value="2">2</option>
+                        <option value="1">1</option>
+                    </select>
+                </label>
+                <label class="wide">
+                    За что оценка
+                    <input id="descriptionInput" type="text" placeholder="Например: майское сочинение">
+                </label>
+                <button type="submit">Сохранить в журнал</button>
+            </form>
+            <p id="saveStatus" class="muted"></p>
+        </section>
+
+        <section class="card">
+            <h2>История последних проверок</h2>
+            <div id="history" class="history"></div>
+        </section>
     </section>
 
-    <section class="card">
-        <h2>2. Распознанный текст</h2>
-        <textarea id="textInput" rows="12" placeholder="Здесь появится текст после OCR. Его можно отредактировать перед проверкой."></textarea>
-        <div class="actions">
-            <button id="detectBtn">Проверить на AI-генерацию</button>
-            <button id="clearBtn" class="secondary">Очистить</button>
-        </div>
-    </section>
-
-    <section id="resultCard" class="card result hidden">
-        <h2>3. Результат</h2>
-        <div class="result-grid">
-            <div>
-                <p class="muted">Вердикт</p>
-                <h3 id="verdict"></h3>
+    <section id="journalTab" class="tab-panel">
+        <section class="card">
+            <div class="journal-toolbar">
+                <h2>Журнал</h2>
+                <div class="toolbar-controls">
+                    <select id="journalClassSelect"></select>
+                    <select id="journalDaysSelect">
+                        <option value="14">14 дней</option>
+                        <option value="30" selected>30 дней</option>
+                        <option value="90">90 дней</option>
+                        <option value="180">180 дней</option>
+                    </select>
+                </div>
             </div>
-            <div>
-                <p class="muted">Процент AI-генерации</p>
-                <h3 id="percent"></h3>
+            <div class="legend">
+                <span><i class="risk-high"></i> высокий процент генерации</span>
+                <span><i class="risk-medium"></i> возможна генерация</span>
+                <span><i class="risk-low"></i> генерации не обнаружено</span>
             </div>
-            <div>
-                <p class="muted">ID записи в БД</p>
-                <h3 id="resultId"></h3>
-            </div>
-        </div>
-        <div class="bar">
-            <div id="barFill"></div>
-        </div>
-    </section>
-
-    <section class="card">
-        <h2>История последних проверок</h2>
-        <div id="history" class="history"></div>
+            <form id="manualGradeForm" class="manual-grade-form">
+                <label>
+                    Ученик
+                    <select id="manualStudentSelect" required></select>
+                </label>
+                <label>
+                    Вид работы
+                    <select id="manualWorkTypeSelect">
+                        <option value="lesson_answer">Ответ на уроке</option>
+                        <option value="dictation">Диктант</option>
+                        <option value="test">Контрольная</option>
+                        <option value="essay">Сочинение</option>
+                    </select>
+                </label>
+                <label>
+                    Дата
+                    <input id="manualWorkDateInput" type="date" required>
+                </label>
+                <label>
+                    Оценка
+                    <select id="manualGradeSelect" required>
+                        <option value="5">5</option>
+                        <option value="4">4</option>
+                        <option value="3">3</option>
+                        <option value="2">2</option>
+                        <option value="1">1</option>
+                    </select>
+                </label>
+                <label class="wide">
+                    За что оценка
+                    <input id="manualDescriptionInput" type="text" placeholder="Например: ответ у доски">
+                </label>
+                <button type="submit">Добавить оценку</button>
+            </form>
+            <p id="manualSaveStatus" class="muted"></p>
+            <div id="journal" class="journal"></div>
+        </section>
     </section>
 </main>
 
-<script src="/static/app.js"></script>
+<dialog id="essayDialog" class="essay-dialog">
+    <button id="closeDialogBtn" class="icon-btn" aria-label="Закрыть">×</button>
+    <div id="dialogBody"></div>
+</dialog>
+
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>
