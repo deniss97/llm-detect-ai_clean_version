@@ -14,9 +14,6 @@ from app.config import settings
 
 
 def main() -> None:
-    if not settings.model_base_path:
-        raise SystemExit("MODEL_BASE_PATH is not set.")
-
     token = settings.hugging_face_hub_token or settings.hf_token or None
     cache_dir = (
         os.environ.get("HUGGINGFACE_HUB_CACHE")
@@ -24,10 +21,10 @@ def main() -> None:
         or str(Path(os.environ.get("HF_HOME", "/root/.cache/huggingface")) / "hub")
     )
 
-    print(f"Downloading {settings.model_base_path} into {cache_dir}...", flush=True)
+    print(f"Downloading {settings.ocr_model_name} into {cache_dir}...", flush=True)
     print(f"Interactive progress: {'yes' if sys.stderr.isatty() else 'no'}", flush=True)
     snapshot_download(
-        repo_id=settings.model_base_path,
+        repo_id=settings.ocr_model_name,
         cache_dir=cache_dir,
         token=token,
         resume_download=True,

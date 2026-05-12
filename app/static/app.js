@@ -4,6 +4,16 @@ const textInput = document.getElementById("textInput");
 const ocrStatus = document.getElementById("ocrStatus");
 const detectBtn = document.getElementById("detectBtn");
 const clearBtn = document.getElementById("clearBtn");
+const segmentationPanel = document.getElementById("segmentationPanel");
+const previewSegmentsBtn = document.getElementById("previewSegmentsBtn");
+const minLineHeightInput = document.getElementById("minLineHeightInput");
+const lineThresholdInput = document.getElementById("lineThresholdInput");
+const linePaddingInput = document.getElementById("linePaddingInput");
+const minLineHeightValue = document.getElementById("minLineHeightValue");
+const lineThresholdValue = document.getElementById("lineThresholdValue");
+const linePaddingValue = document.getElementById("linePaddingValue");
+const segmentationStatus = document.getElementById("segmentationStatus");
+const segmentsPreview = document.getElementById("segmentsPreview");
 
 const resultCard = document.getElementById("resultCard");
 const verdictEl = document.getElementById("verdict");
@@ -72,6 +82,61 @@ function addDaysIso(value, days) {
     return date.toISOString().slice(0, 10);
 }
 
+function isPreviewableImage(file) {
+    return file && file.type.startsWith("image/");
+}
+
+function segmentationParams() {
+    return new URLSearchParams({
+        min_line_height: minLineHeightInput.value,
+        line_threshold_ratio: lineThresholdInput.value,
+        line_padding: linePaddingInput.value,
+    });
+}
+
+function syncSegmentationLabels() {
+    minLineHeightValue.textContent = minLineHeightInput.value;
+    lineThresholdValue.textContent = Number(lineThresholdInput.value).toFixed(2);
+    linePaddingValue.textContent = linePaddingInput.value;
+}
+
+async function previewSegments() {
+    const file = imageInput.files[0];
+    if (!isPreviewableImage(file)) {
+        segmentationPanel.classList.add("hidden");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", file);
+    previewSegmentsBtn.disabled = true;
+    segmentationStatus.textContent = "Делим изображение на строки...";
+
+    try {
+        const response = await apiFetch(`/api/ocr/segment?${segmentationParams().toString()}`, {
+            method: "POST",
+            body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.detail || "Не удалось выполнить сегментацию.");
+        }
+
+        segmentationStatus.textContent = `Найдено строк: ${data.line_count}. Если строки нарезались неверно, измените параметры.`;
+        segmentsPreview.innerHTML = data.lines.map((src, index) => `
+            <figure class="segment-line">
+                <figcaption>${index + 1}</figcaption>
+                <img src="${src}" alt="Строка ${index + 1}">
+            </figure>
+        `).join("");
+    } catch (error) {
+        segmentationStatus.textContent = "";
+        showError(error.message);
+    } finally {
+        previewSegmentsBtn.disabled = false;
+    }
+}
+
 async function initAuth() {
     const response = await fetch("/api/auth/config");
     authConfig = await response.json();
@@ -102,6 +167,24 @@ document.querySelectorAll(".tab").forEach((button) => {
     });
 });
 
+[minLineHeightInput, lineThresholdInput, linePaddingInput].forEach((input) => {
+    input.addEventListener("input", syncSegmentationLabels);
+});
+
+previewSegmentsBtn.addEventListener("click", previewSegments);
+
+imageInput.addEventListener("change", async () => {
+    syncSegmentationLabels();
+    segmentsPreview.innerHTML = "";
+    segmentationStatus.textContent = "";
+    if (isPreviewableImage(imageInput.files[0])) {
+        segmentationPanel.classList.remove("hidden");
+        await previewSegments();
+    } else {
+        segmentationPanel.classList.add("hidden");
+    }
+});
+
 ocrForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -112,10 +195,10 @@ ocrForm.addEventListener("submit", async (event) => {
 
     const formData = new FormData();
     formData.append("image", imageInput.files[0]);
-    setLoading(ocrStatus, "Распознаём файл...");
+    setLoading(ocrStatus, "Распознаём файл с выбранными параметрами сегментации...");
 
     try {
-        const response = await apiFetch("/api/ocr", {
+        const response = await apiFetch(`/api/ocr?${segmentationParams().toString()}`, {
             method: "POST",
             body: formData,
         });
@@ -436,6 +519,7 @@ function escapeHtml(value) {
 }
 
 async function init() {
+    syncSegmentationLabels();
     workDateInput.value = todayIso();
     manualWorkDateInput.value = todayIso();
     journalDateToInput.value = todayIso();

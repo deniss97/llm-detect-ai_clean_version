@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>AI Text Detector</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/static/style.css?v=8" rel="stylesheet">
+    <link href="/static/style.css?v=9" rel="stylesheet">
 </head>
 <body data-threshold="{{ threshold }}">
 <main class="container">
@@ -45,6 +45,31 @@
                 <button type="submit">Распознать текст</button>
             </form>
             <p id="ocrStatus" class="muted"></p>
+            <div id="segmentationPanel" class="segmentation-panel hidden">
+                <div class="segmentation-header">
+                    <h3>Сегментация строк</h3>
+                    <button id="previewSegmentsBtn" class="secondary" type="button">Обновить разбиение</button>
+                </div>
+                <div class="segmentation-controls">
+                    <label>
+                        Минимальная высота строки
+                        <span id="minLineHeightValue">20</span>
+                        <input id="minLineHeightInput" type="range" min="8" max="80" step="1" value="20">
+                    </label>
+                    <label>
+                        Порог проекции
+                        <span id="lineThresholdValue">0.02</span>
+                        <input id="lineThresholdInput" type="range" min="0.01" max="0.2" step="0.01" value="0.02">
+                    </label>
+                    <label>
+                        Отступ строки
+                        <span id="linePaddingValue">15</span>
+                        <input id="linePaddingInput" type="range" min="0" max="60" step="1" value="15">
+                    </label>
+                </div>
+                <p id="segmentationStatus" class="muted"></p>
+                <div id="segmentsPreview" class="segments-preview"></div>
+            </div>
         </section>
 
         <section class="card">
@@ -189,6 +214,6 @@
     <div id="dialogBody"></div>
 </dialog>
 
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>

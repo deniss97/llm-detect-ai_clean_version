@@ -7,6 +7,11 @@ class OCRResponse(BaseModel):
     text: str
 
 
+class OCRSegmentResponse(BaseModel):
+    lines: list[str]
+    line_count: int
+
+
 class DetectRequest(BaseModel):
     text: str = Field(..., min_length=1)
 

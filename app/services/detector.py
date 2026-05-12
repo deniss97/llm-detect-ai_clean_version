@@ -1,30 +1,19 @@
-from __future__ import annotations
-
+import logging
 import json
 import math
-import logging
 import re
 import shutil
 import tempfile
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from app.config import Settings
-
 
 logger = logging.getLogger(__name__)
 
 
 def prepare_peft_adapter_path(adapter_path: str) -> str:
-    """Create a compatibility copy for adapters saved with classification_head.
-
-    Some older training code saved Mistral sequence-classification heads as
-    ``classification_head``, while current Transformers uses ``score``.
-    PEFT then looks for ``score.weight`` and raises KeyError unless the key is
-    renamed before loading.
-    """
-
     path = Path(adapter_path)
     config_path = path / "adapter_config.json"
     weights_path = path / "adapter_model.safetensors"
@@ -69,17 +58,11 @@ def prepare_peft_adapter_path(adapter_path: str) -> str:
 
     state_dict[new_key] = state_dict.pop(old_key)
     save_file(state_dict, str(fixed_dir / "adapter_model.safetensors"), metadata={"format": "pt"})
-    logger.info(
-        "PEFT adapter сохранён в старом формате classification_head; "
-        "используем временную совместимую копию: %s",
-        fixed_dir,
-    )
+    logger.info("Используем совместимую копию PEFT adapter: %s", fixed_dir)
     return str(fixed_dir)
 
 
 def detect_adapter_num_labels(adapter_path: str | None) -> int | None:
-    """Infer sequence-classification head size saved inside a PEFT adapter."""
-
     if not adapter_path:
         return None
 
@@ -100,10 +83,7 @@ def detect_adapter_num_labels(adapter_path: str | None) -> int | None:
     ]:
         weight = state_dict.get(key)
         if weight is not None and len(weight.shape) == 2:
-            num_labels = int(weight.shape[0])
-            logger.info("PEFT adapter classification head: %s shape=%s", key, tuple(weight.shape))
-            return num_labels
-
+            return int(weight.shape[0])
     return None
 
 
@@ -145,24 +125,14 @@ class MockDetector:
 
 
 class TransformerDetector:
-    """Обёртка для вашей модели Mistral-7B + LoRA / PEFT.
-
-    Ожидается модель sequence classification с 1 или 2 логитами.
-    """
-
     mode: str = "transformers_peft"
 
     def __init__(self, settings: Settings):
         if not settings.model_base_path:
             raise ValueError("MODEL_BASE_PATH не задан.")
         if settings.lora_adapter_path and not Path(settings.lora_adapter_path).exists():
-            raise ValueError(
-                f"LORA_ADAPTER_PATH не найден: {settings.lora_adapter_path}. "
-                "Проверьте, что папка best с adapter_config.json и "
-                "adapter_model.safetensors лежит в проекте."
-            )
+            raise ValueError(f"LORA_ADAPTER_PATH не найден: {settings.lora_adapter_path}.")
 
-        logger.info("Импортируем torch/transformers для реального детектора...")
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         from transformers.utils import logging as transformers_logging
@@ -174,20 +144,9 @@ class TransformerDetector:
         if self.device == "cpu" and not settings.allow_cpu_model_load:
             raise RuntimeError(
                 "CUDA/GPU не обнаружена, а загрузка Mistral-7B на CPU отключена. "
-                "Это не ошибка кода: модель очень большая и на CPU обычно "
-                "скачивается/загружается очень долго или упирается в RAM. "
-                "Для демо поставьте USE_MOCK_DETECTOR=true. Если всё равно хотите "
-                "пробовать CPU-запуск, добавьте ALLOW_CPU_MODEL_LOAD=true."
+                "Для CPU-запуска добавьте ALLOW_CPU_MODEL_LOAD=true."
             )
-        logger.info(
-            "Начинаем загрузку детектора: base=%s, lora=%s, device=%s, 4bit=%s",
-            settings.model_base_path,
-            settings.lora_adapter_path or "не задан",
-            self.device,
-            settings.load_in_4bit,
-        )
 
-        logger.info("Загружаем tokenizer из %s...", settings.model_base_path)
         hf_token = settings.hugging_face_hub_token or settings.hf_token or None
         hub_kwargs = {
             "token": hf_token,
@@ -205,7 +164,6 @@ class TransformerDetector:
         quantization_config = None
         if settings.load_in_4bit:
             try:
-                logger.info("Готовим BitsAndBytesConfig для 4-bit загрузки...")
                 from transformers import BitsAndBytesConfig
 
                 quantization_config = BitsAndBytesConfig(
@@ -216,7 +174,6 @@ class TransformerDetector:
                 )
             except Exception:
                 logger.exception("4-bit конфигурация недоступна, грузим без bitsandbytes.")
-                quantization_config = None
 
         kwargs = {
             "trust_remote_code": True,
@@ -227,52 +184,34 @@ class TransformerDetector:
         elif self.device == "cuda":
             kwargs["torch_dtype"] = torch.float16
 
-        logger.info(
-            "Загружаем base model %s. Первый запуск может долго скачивать веса...",
-            settings.model_base_path,
-        )
         adapter_num_labels = detect_adapter_num_labels(settings.lora_adapter_path)
         if adapter_num_labels is not None:
             kwargs["num_labels"] = adapter_num_labels
-            logger.info(
-                "Создаём base model с num_labels=%s, чтобы совпасть с PEFT adapter.",
-                adapter_num_labels,
-            )
+
+        logger.info("Загружаем детектор: base=%s, lora=%s", settings.model_base_path, settings.lora_adapter_path)
         self.model = AutoModelForSequenceClassification.from_pretrained(
             settings.model_base_path,
             **hub_kwargs,
             **kwargs,
         )
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
-        logger.info("Base model загружена.")
 
         if settings.lora_adapter_path:
-            logger.info("Загружаем LoRA adapter из %s...", settings.lora_adapter_path)
             from peft import PeftModel
 
-            adapter_path = prepare_peft_adapter_path(settings.lora_adapter_path)
             self.model = PeftModel.from_pretrained(
                 self.model,
-                adapter_path,
+                prepare_peft_adapter_path(settings.lora_adapter_path),
                 device_map="auto" if self.device == "cuda" else None,
             )
-            logger.info("LoRA adapter загружен.")
 
         if self.device == "cpu":
-            logger.info("Переносим модель на CPU. Для Mistral-7B это может быть очень медленно.")
             self.model.to(self.device)
 
         self.model.eval()
         self.max_length = settings.model_max_length
         self.ai_class_index = settings.ai_class_index
         self.invert_probability = settings.model_invert_probability
-        logger.info(
-            "Детектор готов: mode=%s, max_length=%s, ai_class_index=%s, invert_probability=%s",
-            self.mode,
-            self.max_length,
-            self.ai_class_index,
-            self.invert_probability,
-        )
 
     def predict_probability(self, text: str) -> float:
         inputs = self.tokenizer(
@@ -283,7 +222,7 @@ class TransformerDetector:
             return_tensors="pt",
         )
         device = next(self.model.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+        inputs = {key: value.to(device) for key, value in inputs.items()}
 
         with self.torch.no_grad():
             logits = self.model(**inputs).logits
@@ -303,6 +242,6 @@ class TransformerDetector:
 
 def build_detector(settings: Settings) -> Detector:
     if settings.use_mock_detector:
-        logger.info("USE_MOCK_DETECTOR=true: используем mock-детектор.")
-        return MockDetector()
+        logger.info("USE_MOCK_DETECTOR=true: используем эвристический детектор.")
+        return MockDetector(mode="heuristic")
     return TransformerDetector(settings)

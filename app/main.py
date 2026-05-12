@@ -35,12 +35,13 @@ from app.schemas import (
     JournalResponse,
     JournalStudentResponse,
     OCRResponse,
+    OCRSegmentResponse,
     ResultResponse,
     StudentResponse,
     UserResponse,
 )
 from app.services.detector import Detector, build_detector
-from app.services.ocr import recognize_image, recognize_pdf
+from app.services.ocr import get_recognizer, recognize_image, recognize_pdf, segment_image_previews
 
 
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +95,10 @@ def on_startup() -> None:
     logger.info("Инициализируем детектор...")
     detector = build_detector(settings)
     logger.info("Приложение готово. Детектор: %s", detector.mode)
+    if settings.ocr_preload_on_startup:
+        logger.info("Предзагружаем OCR-модель %s...", settings.ocr_model_name)
+        get_recognizer(settings.ocr_model_name, settings.ocr_model_local_files_only)
+        logger.info("OCR-модель предзагружена.")
 
 
 def get_detector() -> Detector:
@@ -655,6 +660,9 @@ def get_journal(
 async def ocr_image(
     image: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
+    min_line_height: int | None = None,
+    line_threshold_ratio: float | None = None,
+    line_padding: int | None = None,
 ):
     file_bytes = await image.read()
     if len(file_bytes) > settings.upload_max_bytes:
@@ -670,19 +678,72 @@ async def ocr_image(
         raise HTTPException(status_code=400, detail="Загрузите изображение или PDF-файл.")
 
     try:
+        line_options = {
+            "min_line_height": min_line_height if min_line_height is not None else settings.ocr_min_line_height,
+            "line_threshold_ratio": (
+                line_threshold_ratio
+                if line_threshold_ratio is not None
+                else settings.ocr_line_threshold_ratio
+            ),
+            "line_padding": line_padding if line_padding is not None else settings.ocr_line_padding,
+        }
         if is_pdf:
             text = recognize_pdf(
                 file_bytes,
-                lang=settings.ocr_lang,
+                model_name=settings.ocr_model_name,
+                local_files_only=settings.ocr_model_local_files_only,
                 max_pages=settings.pdf_max_pages,
                 render_dpi=settings.pdf_render_dpi,
+                **line_options,
             )
         else:
-            text = recognize_image(file_bytes, lang=settings.ocr_lang)
+            text = recognize_image(
+                file_bytes,
+                model_name=settings.ocr_model_name,
+                local_files_only=settings.ocr_model_local_files_only,
+                **line_options,
+            )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return OCRResponse(text=text)
+
+
+@app.post("/api/ocr/segment", response_model=OCRSegmentResponse)
+async def segment_ocr_image(
+    image: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+    min_line_height: int | None = None,
+    line_threshold_ratio: float | None = None,
+    line_padding: int | None = None,
+):
+    file_bytes = await image.read()
+    if len(file_bytes) > settings.upload_max_bytes:
+        raise HTTPException(status_code=413, detail="Файл слишком большой.")
+
+    content_type = image.content_type or ""
+    filename = (image.filename or "").lower()
+    is_image = content_type.startswith("image/") or filename.endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+    )
+    if not is_image:
+        raise HTTPException(status_code=400, detail="Для предпросмотра сегментации загрузите изображение.")
+
+    try:
+        lines = segment_image_previews(
+            file_bytes,
+            min_line_height=min_line_height if min_line_height is not None else settings.ocr_min_line_height,
+            line_threshold_ratio=(
+                line_threshold_ratio
+                if line_threshold_ratio is not None
+                else settings.ocr_line_threshold_ratio
+            ),
+            line_padding=line_padding if line_padding is not None else settings.ocr_line_padding,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return OCRSegmentResponse(lines=lines, line_count=len(lines))
 
 
 @app.post("/api/detect", response_model=DetectResponse)

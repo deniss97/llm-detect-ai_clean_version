@@ -5,14 +5,18 @@ class Settings(BaseSettings):
     app_name: str = "AI Text Detector Service"
     database_url: str = "sqlite:///./data/results.db"
 
-    ocr_lang: str = "rus+eng"
+    ocr_model_name: str = "cyrillic-trocr/trocr-handwritten-cyrillic"
+    ocr_model_local_files_only: bool = False
+    ocr_preload_on_startup: bool = False
+    ocr_min_line_height: int = 20
+    ocr_line_threshold_ratio: float = 0.02
+    ocr_line_padding: int = 15
     threshold: float = 0.73
     max_text_length: int = 20_000
     upload_max_bytes: int = 8 * 1024 * 1024
     pdf_max_pages: int = 20
     pdf_render_dpi: int = 200
 
-    # true — безопасная заглушка, false — загрузка реальной модели
     use_mock_detector: bool = True
     model_base_path: str | None = None
     lora_adapter_path: str | None = None
