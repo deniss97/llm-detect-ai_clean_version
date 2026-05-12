@@ -1,6 +1,8 @@
 from pathlib import Path
 import base64
+import csv
 import hashlib
+from io import StringIO
 import json
 import logging
 import secrets
@@ -19,6 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.config import settings
 from app.database import get_db, init_db
@@ -26,6 +29,7 @@ from app.database import SessionLocal
 from app.models import DetectionResult, GradeEntry, SchoolClass, Student
 from app.schemas import (
     AuthConfigResponse,
+    ClassImportResponse,
     ClassResponse,
     DetectRequest,
     DetectResponse,
@@ -41,7 +45,13 @@ from app.schemas import (
     UserResponse,
 )
 from app.services.detector import Detector, build_detector
-from app.services.ocr import get_recognizer, recognize_image, recognize_pdf, segment_image_previews
+from app.services.ocr import (
+    get_recognizer,
+    recognize_image,
+    recognize_pdf,
+    segment_image_previews,
+    segment_pdf_previews,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -78,12 +88,16 @@ class CurrentUser:
         is_admin: bool = False,
         display_name: str | None = None,
         identifiers: set[str] | None = None,
+        subject: str | None = None,
+        class_access_keys: set[str] | None = None,
     ):
         self.username = username
         self.roles = roles
         self.is_admin = is_admin
         self.display_name = display_name or username
         self.identifiers = identifiers or {username}
+        self.subject = subject or username
+        self.class_access_keys = class_access_keys or set()
 
 
 @app.on_event("startup")
@@ -146,6 +160,28 @@ def configured_admin_usernames() -> set[str]:
         for username in settings.admin_usernames.split(",")
         if username.strip()
     }
+
+
+def claim_values(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {item.strip() for item in value.replace(";", ",").split(",") if item.strip()}
+    if isinstance(value, list | tuple | set):
+        result = set()
+        for item in value:
+            result.update(claim_values(item))
+        return result
+    return {str(value).strip()} if str(value).strip() else set()
+
+
+def extract_class_access_keys(payload: dict[str, Any]) -> set[str]:
+    claim_name = settings.class_access_claim
+    keys = claim_values(payload.get(claim_name))
+    attributes = payload.get("attributes")
+    if isinstance(attributes, dict):
+        keys.update(claim_values(attributes.get(claim_name)))
+    return keys
 
 
 def token_to_current_user(token: str) -> CurrentUser:
@@ -212,12 +248,15 @@ def token_to_current_user(token: str) -> CurrentUser:
     if email and "@" in email:
         identity_values.add(email.split("@", 1)[0])
     is_admin = settings.admin_role in roles or bool(identity_values & admin_names)
+    subject = payload.get("sub") or username
     return CurrentUser(
         username=username,
         roles=roles,
         is_admin=is_admin,
         display_name=display_name or username,
         identifiers=identity_values,
+        subject=subject,
+        class_access_keys=extract_class_access_keys(payload),
     )
 
 
@@ -231,6 +270,8 @@ def get_current_user(
             roles=[settings.teacher_role],
             is_admin=False,
             identifiers={settings.demo_teacher_username},
+            subject=settings.demo_teacher_username,
+            class_access_keys={"8А"},
         )
 
     token = credentials.credentials if credentials else request.cookies.get(ACCESS_TOKEN_COOKIE)
@@ -309,9 +350,77 @@ def require_class_access(
     school_class = db.get(SchoolClass, class_id)
     if school_class is None:
         raise HTTPException(status_code=404, detail="Класс не найден.")
-    if not user.is_admin and school_class.teacher_username not in user.identifiers:
+    if not user_can_access_class(user, school_class):
         raise HTTPException(status_code=403, detail="Этот класс недоступен текущему учителю.")
     return school_class
+
+
+def user_can_access_class(user: CurrentUser, school_class: SchoolClass) -> bool:
+    if user.is_admin:
+        return True
+    if school_class.owner_subject and school_class.owner_subject == user.subject:
+        return True
+    if school_class.access_key and school_class.access_key in user.class_access_keys:
+        return True
+    return False
+
+
+def normalize_csv_key(value: str) -> str:
+    return value.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def pick_csv_value(row: dict[str, str], keys: set[str]) -> str:
+    normalized = {normalize_csv_key(key): value for key, value in row.items()}
+    for key in keys:
+        value = normalized.get(key)
+        if value and value.strip():
+            return value.strip()
+    return ""
+
+
+def parse_classes_csv(file_bytes: bytes) -> dict[str, list[str]]:
+    try:
+        text = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = file_bytes.decode("cp1251")
+
+    sample = text[:2048]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+    except csv.Error:
+        dialect = csv.excel
+
+    class_keys = {"class", "class_name", "klass", "класс", "название_класса"}
+    student_keys = {"student", "student_name", "full_name", "name", "ученик", "фио", "фамилия_имя"}
+    dict_reader = csv.DictReader(StringIO(text), dialect=dialect)
+    fieldnames = {normalize_csv_key(field or "") for field in (dict_reader.fieldnames or [])}
+    has_known_headers = bool(fieldnames & class_keys) and bool(fieldnames & student_keys)
+
+    if has_known_headers:
+        rows = list(dict_reader)
+    else:
+        reader = csv.reader(StringIO(text), dialect=dialect)
+        rows = [
+            {"class": row[0], "student": row[1]}
+            for row in reader
+            if len(row) >= 2 and row[0].strip() and row[1].strip()
+        ]
+
+    grouped: dict[str, list[str]] = {}
+    for row in rows:
+        class_name = pick_csv_value(row, class_keys)
+        student_name = pick_csv_value(row, student_keys)
+        if not class_name or not student_name:
+            continue
+        grouped.setdefault(class_name, [])
+        if student_name not in grouped[class_name]:
+            grouped[class_name].append(student_name)
+
+    if not grouped:
+        raise ValueError(
+            "CSV должен содержать колонки class/class_name/класс и student/full_name/фио."
+        )
+    return grouped
 
 
 def seed_demo_data() -> None:
@@ -346,11 +455,14 @@ def seed_demo_data() -> None:
                 school_class = SchoolClass(
                     name=class_name,
                     teacher_username=class_data["teacher_username"],
+                    access_key=class_name,
                 )
                 db.add(school_class)
                 db.flush()
             elif school_class.teacher_username != class_data["teacher_username"]:
                 school_class.teacher_username = class_data["teacher_username"]
+            if not school_class.access_key:
+                school_class.access_key = class_name
 
             existing_students = {
                 student.full_name
@@ -541,13 +653,17 @@ def list_classes(
 ):
     query = db.query(SchoolClass).order_by(SchoolClass.name)
     if not user.is_admin:
-        query = query.filter(SchoolClass.teacher_username.in_(user.identifiers))
+        conditions = [SchoolClass.owner_subject == user.subject]
+        if user.class_access_keys:
+            conditions.append(SchoolClass.access_key.in_(user.class_access_keys))
+        query = query.filter(or_(*conditions))
 
     school_classes = query.all()
     logger.info(
-        "Classes request: user=%s identifiers=%s roles=%s is_admin=%s returned=%s",
+        "Classes request: user=%s subject=%s class_access_keys=%s roles=%s is_admin=%s returned=%s",
         user.username,
-        sorted(user.identifiers),
+        user.subject,
+        sorted(user.class_access_keys),
         user.roles,
         user.is_admin,
         len(school_classes),
@@ -558,6 +674,8 @@ def list_classes(
             id=school_class.id,
             name=school_class.name,
             teacher_username=school_class.teacher_username,
+            owner_subject=school_class.owner_subject,
+            access_key=school_class.access_key,
             students=[
                 StudentResponse(id=student.id, full_name=student.full_name)
                 for student in sorted(school_class.students, key=lambda item: item.full_name)
@@ -565,6 +683,81 @@ def list_classes(
         )
         for school_class in school_classes
     ]
+
+
+@app.post("/api/classes/import-csv", response_model=ClassImportResponse)
+async def import_classes_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Загрузите CSV-файл.")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > settings.upload_max_bytes:
+        raise HTTPException(status_code=413, detail="Файл слишком большой.")
+
+    try:
+        grouped = parse_classes_csv(file_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    classes_created = 0
+    classes_updated = 0
+    students_created = 0
+    skipped_students = 0
+    class_ids: list[int] = []
+
+    for class_name, student_names in grouped.items():
+        school_class = (
+            db.query(SchoolClass)
+            .filter(SchoolClass.name == class_name)
+            .one_or_none()
+        )
+        if school_class is None:
+            school_class = SchoolClass(
+                name=class_name,
+                teacher_username=user.username,
+                owner_subject=user.subject,
+                access_key=class_name,
+            )
+            db.add(school_class)
+            db.flush()
+            classes_created += 1
+        else:
+            if not user_can_access_class(user, school_class):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Класс '{class_name}' уже существует, но недоступен текущему пользователю.",
+                )
+            classes_updated += 1
+            if not school_class.access_key:
+                school_class.access_key = class_name
+
+        existing_students = {
+            student.full_name
+            for student in db.query(Student).filter(Student.class_id == school_class.id)
+        }
+        for student_name in student_names:
+            if student_name in existing_students:
+                skipped_students += 1
+                continue
+            db.add(Student(full_name=student_name, class_id=school_class.id))
+            existing_students.add(student_name)
+            students_created += 1
+
+        class_ids.append(school_class.id)
+
+    db.commit()
+    return ClassImportResponse(
+        classes_created=classes_created,
+        classes_updated=classes_updated,
+        students_created=students_created,
+        skipped_students=skipped_students,
+        class_ids=class_ids,
+    )
 
 
 @app.post("/api/grades", response_model=GradeResponse)
@@ -723,27 +916,40 @@ async def segment_ocr_image(
 
     content_type = image.content_type or ""
     filename = (image.filename or "").lower()
+    is_pdf = content_type == "application/pdf" or filename.endswith(".pdf")
     is_image = content_type.startswith("image/") or filename.endswith(
         (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
     )
-    if not is_image:
-        raise HTTPException(status_code=400, detail="Для предпросмотра сегментации загрузите изображение.")
+    if not is_pdf and not is_image:
+        raise HTTPException(status_code=400, detail="Загрузите изображение или PDF-файл.")
 
     try:
-        lines = segment_image_previews(
-            file_bytes,
-            min_line_height=min_line_height if min_line_height is not None else settings.ocr_min_line_height,
-            line_threshold_ratio=(
+        line_options = {
+            "min_line_height": min_line_height if min_line_height is not None else settings.ocr_min_line_height,
+            "line_threshold_ratio": (
                 line_threshold_ratio
                 if line_threshold_ratio is not None
                 else settings.ocr_line_threshold_ratio
             ),
-            line_padding=line_padding if line_padding is not None else settings.ocr_line_padding,
-        )
+            "line_padding": line_padding if line_padding is not None else settings.ocr_line_padding,
+        }
+        if is_pdf:
+            pages = segment_pdf_previews(
+                file_bytes,
+                max_pages=settings.pdf_max_pages,
+                render_dpi=settings.pdf_render_dpi,
+                **line_options,
+            )
+        else:
+            lines = segment_image_previews(file_bytes, **line_options)
+            pages = [{"page": 1, "lines": lines, "line_count": len(lines)}]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return OCRSegmentResponse(lines=lines, line_count=len(lines))
+    return OCRSegmentResponse(
+        pages=pages,
+        line_count=sum(int(page["line_count"]) for page in pages),
+    )
 
 
 @app.post("/api/detect", response_model=DetectResponse)

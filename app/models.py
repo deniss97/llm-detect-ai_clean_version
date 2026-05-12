@@ -25,6 +25,8 @@ class SchoolClass(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     teacher_username: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    owner_subject: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    access_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 
     students: Mapped[list["Student"]] = relationship(
         back_populates="school_class",

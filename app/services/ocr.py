@@ -218,6 +218,58 @@ def segment_image_previews(
     return [encode_preview(line) for line in line_images]
 
 
+def segment_pdf_previews(
+    pdf_bytes: bytes,
+    max_pages: int = 20,
+    render_dpi: int = 200,
+    min_line_height: int = 20,
+    line_threshold_ratio: float = 0.02,
+    line_padding: int = 15,
+) -> list[dict[str, object]]:
+    if not pdf_bytes:
+        raise ValueError("Пустой PDF-файл.")
+
+    try:
+        import fitz
+    except ImportError as exc:
+        raise RuntimeError("Установите зависимость pymupdf для OCR PDF-файлов.") from exc
+
+    try:
+        document = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        raise ValueError("Не удалось открыть PDF-файл.") from exc
+
+    try:
+        if document.page_count == 0:
+            raise ValueError("PDF-файл не содержит страниц.")
+        if document.page_count > max_pages:
+            raise ValueError(f"PDF слишком длинный. Максимум страниц: {max_pages}.")
+
+        zoom = max(render_dpi, 72) / 72
+        matrix = fitz.Matrix(zoom, zoom)
+        pages = []
+
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            lines = segment_image_previews(
+                pixmap.tobytes("png"),
+                min_line_height=min_line_height,
+                line_threshold_ratio=line_threshold_ratio,
+                line_padding=line_padding,
+            )
+            pages.append(
+                {
+                    "page": page_index + 1,
+                    "lines": lines,
+                    "line_count": len(lines),
+                }
+            )
+        return pages
+    finally:
+        document.close()
+
+
 def recognize_pdf(
     pdf_bytes: bytes,
     model_name: str = DEFAULT_MODEL_NAME,

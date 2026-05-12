@@ -239,6 +239,53 @@ form,
     border-radius: 8px;
 }
 
+.class-import-form {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) auto minmax(220px, 1fr);
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 16px;
+    padding: 16px;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.class-import-form .muted {
+    margin: 0;
+}
+
+.csv-help {
+    margin: -4px 0 16px;
+    padding: 12px 14px;
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.csv-help summary {
+    cursor: pointer;
+    color: #243854;
+    font-weight: 900;
+}
+
+.csv-help p {
+    margin: 10px 0;
+    color: var(--muted);
+    line-height: 1.45;
+}
+
+.csv-help code {
+    color: #173f38;
+    font-weight: 850;
+}
+
+.csv-help pre {
+    max-height: none;
+    margin: 8px 0;
+    padding: 12px;
+}
+
 .section-title {
     margin: 14px 0 10px;
     color: #243854;
@@ -343,10 +390,21 @@ input[type="range"] {
 
 .segments-preview {
     display: grid;
-    gap: 10px;
+    gap: 14px;
     max-height: 360px;
     overflow: auto;
     margin-top: 12px;
+}
+
+.segment-page {
+    display: grid;
+    gap: 10px;
+}
+
+.segment-page h4 {
+    margin: 0;
+    color: #243854;
+    font-size: 14px;
 }
 
 .segment-line {
@@ -642,6 +700,7 @@ pre {
     .result-grid,
     .save-grid,
     .manual-grade-form,
+    .class-import-form,
     .journal-filters {
         grid-template-columns: 1fr;
     }

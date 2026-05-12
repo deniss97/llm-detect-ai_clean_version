@@ -7,8 +7,14 @@ class OCRResponse(BaseModel):
     text: str
 
 
-class OCRSegmentResponse(BaseModel):
+class OCRSegmentPageResponse(BaseModel):
+    page: int
     lines: list[str]
+    line_count: int
+
+
+class OCRSegmentResponse(BaseModel):
+    pages: list[OCRSegmentPageResponse]
     line_count: int
 
 
@@ -58,7 +64,17 @@ class ClassResponse(BaseModel):
     id: int
     name: str
     teacher_username: str
+    owner_subject: str | None = None
+    access_key: str | None = None
     students: list[StudentResponse] = []
+
+
+class ClassImportResponse(BaseModel):
+    classes_created: int
+    classes_updated: int
+    students_created: int
+    skipped_students: int
+    class_ids: list[int]
 
 
 class GradeCreateRequest(BaseModel):

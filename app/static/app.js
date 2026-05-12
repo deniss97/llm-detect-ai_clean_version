@@ -35,6 +35,9 @@ const journalClassSelect = document.getElementById("journalClassSelect");
 const journalDateFromInput = document.getElementById("journalDateFromInput");
 const journalDateToInput = document.getElementById("journalDateToInput");
 const journalEl = document.getElementById("journal");
+const classImportForm = document.getElementById("classImportForm");
+const classCsvInput = document.getElementById("classCsvInput");
+const classImportStatus = document.getElementById("classImportStatus");
 const manualGradeForm = document.getElementById("manualGradeForm");
 const manualStudentSelect = document.getElementById("manualStudentSelect");
 const manualWorkTypeSelect = document.getElementById("manualWorkTypeSelect");
@@ -83,7 +86,7 @@ function addDaysIso(value, days) {
 }
 
 function isPreviewableImage(file) {
-    return file && file.type.startsWith("image/");
+    return file && (file.type.startsWith("image/") || file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
 }
 
 function segmentationParams() {
@@ -123,11 +126,16 @@ async function previewSegments() {
         }
 
         segmentationStatus.textContent = `Найдено строк: ${data.line_count}. Если строки нарезались неверно, измените параметры.`;
-        segmentsPreview.innerHTML = data.lines.map((src, index) => `
-            <figure class="segment-line">
-                <figcaption>${index + 1}</figcaption>
-                <img src="${src}" alt="Строка ${index + 1}">
-            </figure>
+        segmentsPreview.innerHTML = data.pages.map((page) => `
+            <section class="segment-page">
+                <h4>Страница ${page.page} · строк: ${page.line_count}</h4>
+                ${page.lines.map((src, index) => `
+                    <figure class="segment-line">
+                        <figcaption>${index + 1}</figcaption>
+                        <img src="${src}" alt="Страница ${page.page}, строка ${index + 1}">
+                    </figure>
+                `).join("")}
+            </section>
         `).join("");
     } catch (error) {
         segmentationStatus.textContent = "";
@@ -263,6 +271,38 @@ journalClassSelect.addEventListener("change", () => {
 journalDateFromInput.addEventListener("change", loadJournal);
 journalDateToInput.addEventListener("change", loadJournal);
 closeDialogBtn.addEventListener("click", () => essayDialog.close());
+
+classImportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!classCsvInput.files.length) {
+        showError("Выберите CSV-файл.");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", classCsvInput.files[0]);
+    classImportStatus.textContent = "Импортируем классы...";
+
+    try {
+        const response = await apiFetch("/api/classes/import-csv", {
+            method: "POST",
+            body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.detail || "Не удалось импортировать CSV.");
+        }
+
+        classImportStatus.textContent =
+            `Создано классов: ${data.classes_created}, обновлено: ${data.classes_updated}, добавлено учеников: ${data.students_created}.`;
+        classCsvInput.value = "";
+        await loadClasses();
+        await loadJournal();
+    } catch (error) {
+        classImportStatus.textContent = "";
+        showError(error.message);
+    }
+});
 
 saveGradeForm.addEventListener("submit", async (event) => {
     event.preventDefault();

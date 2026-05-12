@@ -41,7 +41,24 @@
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:8000/*##http://127.0.0.1:8000/*"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "school_classes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "school_classes",
+            "claim.name": "school_classes",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -52,6 +69,11 @@
       "firstName": "Demo",
       "lastName": "Teacher",
       "email": "demo.teacher@example.test",
+      "attributes": {
+        "school_classes": [
+          "8А"
+        ]
+      },
       "credentials": [
         {
           "type": "password",
@@ -70,6 +92,11 @@
       "firstName": "Second",
       "lastName": "Teacher",
       "email": "second.teacher@example.test",
+      "attributes": {
+        "school_classes": [
+          "9Б"
+        ]
+      },
       "credentials": [
         {
           "type": "password",
@@ -88,6 +115,12 @@
       "firstName": "Admin",
       "lastName": "Teacher",
       "email": "admin.teacher@example.test",
+      "attributes": {
+        "school_classes": [
+          "8А",
+          "9Б"
+        ]
+      },
       "credentials": [
         {
           "type": "password",

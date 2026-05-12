@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     admin_usernames: str = "admin.teacher,admin.teacher@example.test"
     teacher_role: str = "teacher"
     demo_teacher_username: str = "demo.teacher"
+    class_access_claim: str = "school_classes"
 
     model_config = SettingsConfigDict(
         env_file=".env",
