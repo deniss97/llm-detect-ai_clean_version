@@ -6,6 +6,7 @@ from io import StringIO
 import json
 import logging
 import secrets
+from threading import Lock, Thread
 from datetime import date, timedelta
 from functools import lru_cache
 from typing import Any
@@ -72,9 +73,26 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 detector: Detector | None = None
+detector_lock = Lock()
+model_status_lock = Lock()
+detector_status: dict[str, str | None] = {
+    "state": "pending",
+    "message": "Детектор ожидает предзагрузки.",
+    "mode": None,
+}
+ocr_status: dict[str, str | None] = {
+    "state": "pending" if settings.ocr_preload_on_startup else "disabled",
+    "message": (
+        "OCR-модель ожидает предзагрузки."
+        if settings.ocr_preload_on_startup
+        else "OCR-модель загрузится при первом распознавании."
+    ),
+    "mode": None,
+}
 bearer_scheme = HTTPBearer(auto_error=False)
 ACCESS_TOKEN_COOKIE = "ai_detector_access_token"
 ID_TOKEN_COOKIE = "ai_detector_id_token"
+REFRESH_TOKEN_COOKIE = "ai_detector_refresh_token"
 OAUTH_STATE_COOKIE = "ai_detector_oauth_state"
 OAUTH_VERIFIER_COOKIE = "ai_detector_pkce_verifier"
 OAUTH_NEXT_COOKIE = "ai_detector_next"
@@ -102,22 +120,77 @@ class CurrentUser:
 
 @app.on_event("startup")
 def on_startup() -> None:
-    global detector
     logger.info("Инициализируем БД...")
     init_db()
     seed_demo_data()
-    logger.info("Инициализируем детектор...")
-    detector = build_detector(settings)
-    logger.info("Приложение готово. Детектор: %s", detector.mode)
-    if settings.ocr_preload_on_startup:
-        logger.info("Предзагружаем OCR-модель %s...", settings.ocr_model_name)
-        get_recognizer(settings.ocr_model_name, settings.ocr_model_local_files_only)
+    logger.info("Запускаем фоновую предзагрузку моделей.")
+    Thread(target=preload_models, name="model-preload", daemon=True).start()
+    logger.info("Приложение готово. Статус предзагрузки доступен в /api/model-status.")
+
+
+def set_model_status(component: str, state: str, message: str, mode: str | None = None) -> None:
+    target = detector_status if component == "detector" else ocr_status
+    with model_status_lock:
+        target["state"] = state
+        target["message"] = message
+        if mode is not None:
+            target["mode"] = mode
+
+
+def preload_detector() -> None:
+    global detector
+    set_model_status("detector", "loading", "Загружаем детектор AI-текста...")
+    logger.info("Предзагружаем детектор...")
+    try:
+        with detector_lock:
+            if detector is None:
+                detector = build_detector(settings)
+            mode = detector.mode
+        set_model_status("detector", "ready", "Детектор готов к проверке.", mode)
+        logger.info("Детектор предзагружен: %s", mode)
+    except Exception:
+        logger.exception("Не удалось предзагрузить детектор.")
+        set_model_status("detector", "error", "Не удалось загрузить детектор. Проверьте логи контейнера.")
+
+
+def preload_ocr() -> None:
+    if not settings.ocr_preload_on_startup:
+        return
+    set_model_status("ocr", "loading", "Загружаем OCR-модель...")
+    logger.info("Предзагружаем OCR-модель %s...", settings.ocr_model_name)
+    try:
+        recognizer = get_recognizer(settings.ocr_model_name, settings.ocr_model_local_files_only)
+        set_model_status("ocr", "ready", "OCR-модель готова к распознаванию.", recognizer.mode)
         logger.info("OCR-модель предзагружена.")
+    except Exception:
+        logger.exception("Не удалось предзагрузить OCR-модель.")
+        set_model_status("ocr", "error", "Не удалось загрузить OCR-модель. Проверьте логи контейнера.")
+
+
+def preload_models() -> None:
+    preload_detector()
+    preload_ocr()
 
 
 def get_detector() -> Detector:
+    global detector
     if detector is None:
-        raise HTTPException(status_code=503, detail="Детектор ещё не загружен.")
+        with model_status_lock:
+            state = detector_status["state"]
+        if state == "loading":
+            raise HTTPException(status_code=503, detail="Детектор ещё загружается. Подождите завершения предзагрузки.")
+        with detector_lock:
+            if detector is None:
+                logger.info("Инициализируем детектор при первом запросе...")
+                set_model_status("detector", "loading", "Загружаем детектор AI-текста...")
+                try:
+                    detector = build_detector(settings)
+                except Exception:
+                    logger.exception("Не удалось инициализировать детектор.")
+                    set_model_status("detector", "error", "Не удалось загрузить детектор. Проверьте логи контейнера.")
+                    raise HTTPException(status_code=503, detail="Детектор не удалось загрузить.")
+                set_model_status("detector", "ready", "Детектор готов к проверке.", detector.mode)
+                logger.info("Детектор загружен: %s", detector.mode)
     return detector
 
 
@@ -262,6 +335,7 @@ def token_to_current_user(token: str) -> CurrentUser:
 
 def get_current_user(
     request: Request,
+    response: Response,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
     if not settings.auth_enabled:
@@ -276,9 +350,28 @@ def get_current_user(
 
     token = credentials.credentials if credentials else request.cookies.get(ACCESS_TOKEN_COOKIE)
     if not token:
+        refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+        if refresh_token and not credentials:
+            try:
+                token_data = refresh_keycloak_session(refresh_token)
+                set_session_cookies(response, token_data)
+                return token_to_current_user(token_data["access_token"])
+            except HTTPException:
+                clear_session_cookies(response)
         raise HTTPException(status_code=401, detail="Требуется авторизация.")
 
-    return token_to_current_user(token)
+    try:
+        return token_to_current_user(token)
+    except HTTPException as exc:
+        refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+        if refresh_token and not credentials:
+            try:
+                token_data = refresh_keycloak_session(refresh_token)
+                set_session_cookies(response, token_data)
+                return token_to_current_user(token_data["access_token"])
+            except HTTPException:
+                clear_session_cookies(response)
+        raise HTTPException(status_code=401, detail="Сессия истекла.") from exc
 
 
 def pkce_challenge(verifier: str) -> str:
@@ -312,6 +405,30 @@ def exchange_authorization_code(code: str, verifier: str, redirect_uri: str) -> 
         raise HTTPException(status_code=401, detail="Keycloak не подтвердил код входа.") from exc
 
 
+def refresh_keycloak_session(refresh_token: str) -> dict[str, Any]:
+    token_url = f"{keycloak_internal_realm_url()}/protocol/openid-connect/token"
+    payload = urlencode(
+        {
+            "grant_type": "refresh_token",
+            "client_id": settings.keycloak_client_id,
+            "refresh_token": refresh_token,
+        }
+    ).encode("utf-8")
+    request = UrlRequest(
+        token_url,
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        logger.info("Keycloak refresh failed: %s", detail)
+        raise HTTPException(status_code=401, detail="Сессия истекла.") from exc
+
+
 def set_session_cookies(response: Response, token_data: dict[str, Any]) -> None:
     max_age = int(token_data.get("expires_in") or 300)
     response.set_cookie(
@@ -329,12 +446,22 @@ def set_session_cookies(response: Response, token_data: dict[str, Any]) -> None:
             httponly=True,
             samesite="lax",
         )
+    if token_data.get("refresh_token"):
+        refresh_max_age = int(token_data.get("refresh_expires_in") or max_age)
+        response.set_cookie(
+            REFRESH_TOKEN_COOKIE,
+            token_data["refresh_token"],
+            max_age=refresh_max_age,
+            httponly=True,
+            samesite="lax",
+        )
 
 
 def clear_session_cookies(response: Response) -> None:
     for cookie_name in [
         ACCESS_TOKEN_COOKIE,
         ID_TOKEN_COOKIE,
+        REFRESH_TOKEN_COOKIE,
         OAUTH_STATE_COOKIE,
         OAUTH_VERIFIER_COOKIE,
         OAUTH_NEXT_COOKIE,
@@ -595,26 +722,50 @@ def logout(request: Request):
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     current_user = None
+    refreshed_token_data = None
     if settings.auth_enabled:
         token = request.cookies.get(ACCESS_TOKEN_COOKIE)
+        refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
         if not token:
-            return RedirectResponse(url="/login")
+            if refresh_token:
+                try:
+                    refreshed_token_data = refresh_keycloak_session(refresh_token)
+                    current_user = token_to_current_user(refreshed_token_data["access_token"])
+                except HTTPException:
+                    response = RedirectResponse(url="/login")
+                    clear_session_cookies(response)
+                    return response
+            else:
+                return RedirectResponse(url="/login")
         try:
-            current_user = token_to_current_user(token)
+            if current_user is None and token:
+                current_user = token_to_current_user(token)
         except HTTPException:
-            response = RedirectResponse(url="/login")
-            clear_session_cookies(response)
-            return response
+            if refresh_token:
+                try:
+                    refreshed_token_data = refresh_keycloak_session(refresh_token)
+                    current_user = token_to_current_user(refreshed_token_data["access_token"])
+                except HTTPException:
+                    response = RedirectResponse(url="/login")
+                    clear_session_cookies(response)
+                    return response
+            else:
+                response = RedirectResponse(url="/login")
+                clear_session_cookies(response)
+                return response
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "threshold": settings.threshold,
-            "detector_mode": detector.mode if detector else "loading",
+            "detector_mode": detector.mode if detector else "not_loaded",
             "current_user": current_user,
         },
     )
+    if refreshed_token_data:
+        set_session_cookies(response, refreshed_token_data)
+    return response
 
 
 @app.get("/api/auth/config", response_model=AuthConfigResponse)
@@ -642,8 +793,18 @@ def me(user: CurrentUser = Depends(get_current_user)):
 
 
 @app.get("/api/health", response_model=HealthResponse)
-def health(detector_service: Detector = Depends(get_detector)):
-    return HealthResponse(status="ok", detector_mode=detector_service.mode)
+def health():
+    return HealthResponse(status="ok", detector_mode=detector.mode if detector else "not_loaded")
+
+
+@app.get("/api/model-status")
+def model_status():
+    with model_status_lock:
+        return {
+            "detector": dict(detector_status),
+            "ocr": dict(ocr_status),
+            "ready": detector_status["state"] == "ready",
+        }
 
 
 @app.get("/api/classes", response_model=list[ClassResponse])

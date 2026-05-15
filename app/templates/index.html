@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>AI Text Detector</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/static/style.css?v=10" rel="stylesheet">
+    <link href="/static/style.css?v=13" rel="stylesheet">
 </head>
 <body data-threshold="{{ threshold }}">
 <main class="container">
@@ -39,10 +39,29 @@
 
     <section id="checkTab" class="tab-panel active">
         <section class="card">
-            <h2>1. Загрузка файла</h2>
+            <div class="upload-card-heading">
+                <h2>1. Загрузка файла</h2>
+                <div class="model-status-inline" aria-label="Статус моделей">
+                    <div class="model-status-item" id="detectorStatusItem">
+                        <span class="status-dot status-pending" id="detectorStatusDot"></span>
+                        <div>
+                            <strong>Детектор</strong>
+                            <p id="detectorStatusText" class="muted">Проверяем статус...</p>
+                        </div>
+                    </div>
+                    <div class="model-status-item" id="ocrModelStatusItem">
+                        <span class="status-dot status-pending" id="ocrModelStatusDot"></span>
+                        <div>
+                            <strong>OCR</strong>
+                            <p id="ocrModelStatusText" class="muted">Проверяем статус...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <form id="ocrForm">
                 <input id="imageInput" type="file" name="image" accept="image/*,application/pdf,.pdf" required>
                 <button type="submit">Распознать текст</button>
+                <button id="clearBtn" class="secondary" type="button">Сбросить текст</button>
             </form>
             <p id="ocrStatus" class="muted"></p>
             <div id="segmentationPanel" class="segmentation-panel hidden">
@@ -77,7 +96,6 @@
             <textarea id="textInput" rows="12" placeholder="Здесь появится текст после OCR. Его можно отредактировать перед проверкой."></textarea>
             <div class="actions">
                 <button id="detectBtn">Проверить на AI-генерацию</button>
-                <button id="clearBtn" class="secondary">Очистить</button>
             </div>
         </section>
 
@@ -157,16 +175,6 @@
                 <button type="submit">Добавить классы</button>
                 <p id="classImportStatus" class="muted"></p>
             </form>
-            <details class="csv-help">
-                <summary>Формат CSV и доступы</summary>
-                <div>
-                    <p>CSV с заголовками: <code>class,student</code> или <code>класс,фио</code>. Без заголовков: первая колонка класс, вторая ученик.</p>
-                    <pre>class,student
-10А,Иванова Мария Дмитриевна
-10А,Петров Иван Сергеевич</pre>
-                    <p>Импортированный класс доступен создателю. Чтобы выдать доступ другому пользователю, в Keycloak добавьте ему атрибут <code>school_classes</code> со значением, равным названию класса, например <code>10А</code>.</p>
-                </div>
-            </details>
             <div class="journal-filters">
                 <label>
                     Класс
@@ -232,6 +240,6 @@
     <div id="dialogBody"></div>
 </dialog>
 
-<script src="/static/app.js?v=10"></script>
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>

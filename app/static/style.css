@@ -255,37 +255,6 @@ form,
     margin: 0;
 }
 
-.csv-help {
-    margin: -4px 0 16px;
-    padding: 12px 14px;
-    background: #ffffff;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-}
-
-.csv-help summary {
-    cursor: pointer;
-    color: #243854;
-    font-weight: 900;
-}
-
-.csv-help p {
-    margin: 10px 0;
-    color: var(--muted);
-    line-height: 1.45;
-}
-
-.csv-help code {
-    color: #173f38;
-    font-weight: 850;
-}
-
-.csv-help pre {
-    max-height: none;
-    margin: 8px 0;
-    padding: 12px;
-}
-
 .section-title {
     margin: 14px 0 10px;
     color: #243854;
@@ -347,6 +316,91 @@ button.secondary {
 
 button.secondary:hover {
     background: #dce7f5;
+}
+
+.upload-card-heading {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.upload-card-heading h2 {
+    margin-bottom: 0;
+}
+
+.model-status-inline {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 720px;
+}
+
+.model-status-item {
+    display: grid;
+    grid-template-columns: 10px minmax(0, auto);
+    gap: 7px;
+    align-items: start;
+    max-width: 340px;
+    padding: 5px 8px;
+    color: var(--muted);
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+}
+
+.model-status-item strong {
+    display: inline;
+    margin-right: 4px;
+    color: #40516a;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.model-status-item p {
+    display: inline;
+    margin-bottom: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    margin-top: 4px;
+    border-radius: 50%;
+    background: var(--line-strong);
+}
+
+.status-loading {
+    background: var(--amber);
+    animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+.status-ready {
+    background: var(--green);
+}
+
+.status-error {
+    background: var(--red);
+}
+
+.status-disabled,
+.status-pending {
+    background: var(--line-strong);
+}
+
+@keyframes status-pulse {
+    0%,
+    100% {
+        opacity: 0.45;
+    }
+    50% {
+        opacity: 1;
+    }
 }
 
 .segmentation-panel {
@@ -712,6 +766,15 @@ pre {
 
     .segmentation-header {
         display: grid;
+    }
+
+    .upload-card-heading {
+        display: grid;
+        gap: 10px;
+    }
+
+    .model-status-inline {
+        justify-content: flex-start;
     }
 
     .account-menu summary {

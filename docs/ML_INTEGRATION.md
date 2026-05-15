@@ -17,6 +17,11 @@ OCR сделан по приложенному ноутбуку:
 - каждая строка отправляется в `cyrillic-trocr/trocr-handwritten-cyrillic`;
 - результат склеивается построчно.
 
+Детектор AI-текста может работать в старом режиме одной PEFT/LoRA-модели или в режиме ансамбля обновлённых моделей из `MODEL_ZOO.md`.
+
+Старый режим использует адаптер `./models/r_detect_qwen3` поверх `Qwen/Qwen2.5-7B-Instruct`.
+Если в папке адаптера есть tokenizer-файлы, backend загружает tokenizer оттуда, а базовую модель берёт из `MODEL_BASE_PATH`.
+
 Настройки в `.env`:
 
 ```env
@@ -26,7 +31,23 @@ OCR_PRELOAD_ON_STARTUP=false
 OCR_MIN_LINE_HEIGHT=20
 OCR_LINE_THRESHOLD_RATIO=0.02
 OCR_LINE_PADDING=15
+USE_MOCK_DETECTOR=false
+MODEL_BASE_PATH=Qwen/Qwen2.5-7B-Instruct
+LORA_ADAPTER_PATH=./models/r_detect_qwen3
+MODEL_INVERT_PROBABILITY=false
 ```
+
+Для обновлённого ансамбля:
+
+```env
+USE_MOCK_DETECTOR=false
+USE_ENSEMBLE_DETECTOR=true
+THRESHOLD=0.5
+ENSEMBLE_QWEN_ADAPTER_PATH=./models/r_detect_qwen3
+ENSEMBLE_T_LITE_ADAPTER_PATH=./models/r_detect_t_lite_v2
+```
+
+По умолчанию ансамбль усредняет доступные detection-score с весами из `MODEL_ZOO.md`. Embedding-модель `r_embed_final` подключается как KNN по embedding-пространству: reference-база берётся из `./datasets/final_prepared/final_train.csv`, а вероятность AI считается по меткам ближайших соседей. Когда embedding-score включён, `ENSEMBLE_USE_META_LEARNER=true` загружает `./models/meta_learner_3models.pkl` через scikit-learn и использует его `predict_proba`.
 
 ## Предзагрузка модели
 

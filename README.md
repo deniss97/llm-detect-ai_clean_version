@@ -129,6 +129,58 @@ docker compose up --build
 
 Сервис будет доступен на http://127.0.0.1:8000
 
+## Модель детекции
+
+Детектор подключён как LoRA-адаптер `./models/r_detect_qwen3` поверх базовой модели `Qwen/Qwen2.5-7B-Instruct`.
+Папка адаптера смонтирована в Docker через `./models:/app/models`, поэтому для реального детектора в `.env` должны быть включены:
+
+```env
+USE_MOCK_DETECTOR=false
+MODEL_BASE_PATH=Qwen/Qwen2.5-7B-Instruct
+LORA_ADAPTER_PATH=./models/r_detect_qwen3
+MODEL_INVERT_PROBABILITY=false
+```
+
+При первом запуске базовая Qwen-модель скачивается в `./hf-cache`. После успешной загрузки можно поставить `MODEL_LOCAL_FILES_ONLY=true`, чтобы приложение не ходило в сеть за весами.
+
+### Ансамбль обновлённых моделей
+
+Локальные веса из `MODEL_ZOO.md` ожидаются в папке `./models`:
+
+- `./models/r_detect_qwen3`
+- `./models/r_detect_t_lite_v2`
+- `./models/r_embed_final`
+- `./models/meta_learner_3models.pkl`
+- `./datasets/final_prepared/final_train.csv`
+
+Для запуска ансамбля из двух detection-моделей:
+
+```env
+USE_MOCK_DETECTOR=false
+USE_ENSEMBLE_DETECTOR=true
+THRESHOLD=0.5
+ENSEMBLE_QWEN_BASE_PATH=Qwen/Qwen2.5-7B-Instruct
+ENSEMBLE_QWEN_ADAPTER_PATH=./models/r_detect_qwen3
+ENSEMBLE_T_LITE_BASE_PATH=t-tech/T-lite-it-1.0
+ENSEMBLE_T_LITE_ADAPTER_PATH=./models/r_detect_t_lite_v2
+```
+
+Embedding-модель `USER-bge-m3` обучена как ranking/embedding-модель. В inference она используется как KNN по embedding-пространству: тексты из `final_train.csv` кодируются как reference-база, а вероятность AI считается по меткам ближайших соседей.
+
+```env
+EMBEDDING_ENABLED=true
+EMBEDDING_REFERENCE_DATASET_PATH=./datasets/final_prepared/final_train.csv
+EMBEDDING_KNN_K=5
+```
+
+После этого можно включить logistic meta learner из `meta_learner_3models.pkl`:
+
+```env
+ENSEMBLE_USE_META_LEARNER=true
+ENSEMBLE_META_LEARNER_PATH=./models/meta_learner_3models.pkl
+ENSEMBLE_META_FEATURE_ORDER=t_lite,qwen,embed
+```
+
 ## Предзагрузка TrOCR
 
 Docker монтирует `./hf-cache` в контейнер как кэш Hugging Face, а `.dockerignore` исключает этот кэш из сборки образа. Поэтому веса не должны скачиваться заново или копироваться в image после каждой пересборки. Чтобы скачать их заранее:

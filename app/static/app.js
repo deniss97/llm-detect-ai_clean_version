@@ -14,6 +14,10 @@ const lineThresholdValue = document.getElementById("lineThresholdValue");
 const linePaddingValue = document.getElementById("linePaddingValue");
 const segmentationStatus = document.getElementById("segmentationStatus");
 const segmentsPreview = document.getElementById("segmentsPreview");
+const detectorStatusDot = document.getElementById("detectorStatusDot");
+const detectorStatusText = document.getElementById("detectorStatusText");
+const ocrModelStatusDot = document.getElementById("ocrModelStatusDot");
+const ocrModelStatusText = document.getElementById("ocrModelStatusText");
 
 const resultCard = document.getElementById("resultCard");
 const verdictEl = document.getElementById("verdict");
@@ -52,17 +56,36 @@ const closeDialogBtn = document.getElementById("closeDialogBtn");
 let currentResult = null;
 let classes = [];
 let authConfig = {enabled: false};
+let ocrRequestId = 0;
+let detectRequestId = 0;
+let segmentationRequestId = 0;
+let detectorReady = false;
+let detectInProgress = false;
+let modelStatusTimer = null;
 const aiHighThreshold = Number(document.body.dataset.threshold || 0.73) * 100;
+
+class AuthRedirectError extends Error {
+    constructor() {
+        super("Требуется повторный вход.");
+        this.name = "AuthRedirectError";
+    }
+}
 
 function authHeaders() {
     return {};
+}
+
+function redirectToLogin() {
+    const nextUrl = `${window.location.pathname}${window.location.search}`;
+    window.location.assign(`/login?next_url=${encodeURIComponent(nextUrl || "/")}`);
 }
 
 async function apiFetch(url, options = {}) {
     const headers = {...authHeaders(), ...(options.headers || {})};
     const response = await fetch(url, {...options, headers});
     if (response.status === 401 && authConfig.enabled) {
-        window.location.href = "/login";
+        redirectToLogin();
+        throw new AuthRedirectError();
     }
     return response;
 }
@@ -73,6 +96,61 @@ function setLoading(element, text) {
 
 function showError(message) {
     alert(message);
+}
+
+function showRequestError(error) {
+    if (error instanceof AuthRedirectError) {
+        return;
+    }
+    showError(error.message);
+}
+
+function clearElement(element) {
+    element.replaceChildren();
+}
+
+async function readJsonResponse(response, fallbackMessage) {
+    try {
+        return await response.json();
+    } catch (error) {
+        return {detail: fallbackMessage};
+    }
+}
+
+function renderSegmentsPreview(pages) {
+    const fragment = document.createDocumentFragment();
+
+    pages.forEach((page) => {
+        const section = document.createElement("section");
+        section.className = "segment-page";
+
+        const heading = document.createElement("h4");
+        heading.textContent = `Страница ${page.page} · строк: ${page.line_count}`;
+        section.appendChild(heading);
+
+        (page.lines || []).forEach((src, index) => {
+            const figure = document.createElement("figure");
+            figure.className = "segment-line";
+
+            const caption = document.createElement("figcaption");
+            caption.textContent = String(index + 1);
+
+            const image = document.createElement("img");
+            image.alt = `Страница ${page.page}, строка ${index + 1}`;
+            image.loading = "lazy";
+            image.decoding = "async";
+            if (typeof src === "string" && src.startsWith("data:image/")) {
+                image.src = src;
+            }
+
+            figure.append(caption, image);
+            section.appendChild(figure);
+        });
+
+        fragment.appendChild(section);
+    });
+
+    segmentsPreview.replaceChildren(fragment);
 }
 
 function todayIso() {
@@ -103,6 +181,91 @@ function syncSegmentationLabels() {
     linePaddingValue.textContent = linePaddingInput.value;
 }
 
+function statusClass(state) {
+    return {
+        loading: "status-loading",
+        ready: "status-ready",
+        error: "status-error",
+        disabled: "status-disabled",
+        pending: "status-pending",
+    }[state] || "status-pending";
+}
+
+function renderModelStatusItem(dot, textElement, status) {
+    const state = status?.state || "pending";
+    dot.className = `status-dot ${statusClass(state)}`;
+    textElement.textContent = status?.message || "Статус неизвестен.";
+}
+
+function syncDetectButtonState() {
+    if (detectInProgress) {
+        detectBtn.disabled = true;
+        detectBtn.textContent = "Проверяем...";
+        return;
+    }
+    detectBtn.disabled = !detectorReady;
+    detectBtn.textContent = detectorReady ? "Проверить на AI-генерацию" : "Детектор загружается...";
+}
+
+async function refreshModelStatus() {
+    try {
+        const response = await apiFetch("/api/model-status");
+        const data = await readJsonResponse(response, "Не удалось загрузить статус моделей.");
+        if (!response.ok) {
+            throw new Error(data.detail || "Не удалось загрузить статус моделей.");
+        }
+
+        renderModelStatusItem(detectorStatusDot, detectorStatusText, data.detector);
+        renderModelStatusItem(ocrModelStatusDot, ocrModelStatusText, data.ocr);
+        detectorReady = data.detector?.state === "ready";
+        syncDetectButtonState();
+
+        const detectorDone = ["ready", "error"].includes(data.detector?.state);
+        const ocrDone = ["ready", "error", "disabled"].includes(data.ocr?.state);
+        if (detectorDone && ocrDone && modelStatusTimer) {
+            clearInterval(modelStatusTimer);
+            modelStatusTimer = null;
+        }
+    } catch (error) {
+        detectorReady = false;
+        syncDetectButtonState();
+        detectorStatusDot.className = "status-dot status-error";
+        detectorStatusText.textContent = "Не удалось получить статус моделей.";
+    }
+}
+
+function startModelStatusPolling() {
+    refreshModelStatus();
+    modelStatusTimer = window.setInterval(refreshModelStatus, 2000);
+}
+
+function clearDetectionResult() {
+    currentResult = null;
+    resultCard.classList.add("hidden");
+    verdictEl.textContent = "";
+    percentEl.textContent = "";
+    resultIdEl.textContent = "";
+    barFill.style.width = "0";
+    saveStatus.textContent = "";
+}
+
+function clearOcrState({clearFile = false} = {}) {
+    ocrRequestId += 1;
+    detectRequestId += 1;
+    segmentationRequestId += 1;
+    detectInProgress = false;
+    textInput.value = "";
+    ocrStatus.textContent = "";
+    segmentationStatus.textContent = "";
+    clearElement(segmentsPreview);
+    segmentationPanel.classList.add("hidden");
+    clearDetectionResult();
+    if (clearFile) {
+        imageInput.value = "";
+    }
+    previewSegmentsBtn.disabled = false;
+}
+
 async function previewSegments() {
     const file = imageInput.files[0];
     if (!isPreviewableImage(file)) {
@@ -112,6 +275,7 @@ async function previewSegments() {
 
     const formData = new FormData();
     formData.append("image", file);
+    const requestId = ++segmentationRequestId;
     previewSegmentsBtn.disabled = true;
     segmentationStatus.textContent = "Делим изображение на строки...";
 
@@ -120,34 +284,32 @@ async function previewSegments() {
             method: "POST",
             body: formData,
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Не удалось выполнить сегментацию.");
         if (!response.ok) {
             throw new Error(data.detail || "Не удалось выполнить сегментацию.");
         }
+        if (requestId !== segmentationRequestId) {
+            return;
+        }
 
         segmentationStatus.textContent = `Найдено строк: ${data.line_count}. Если строки нарезались неверно, измените параметры.`;
-        segmentsPreview.innerHTML = data.pages.map((page) => `
-            <section class="segment-page">
-                <h4>Страница ${page.page} · строк: ${page.line_count}</h4>
-                ${page.lines.map((src, index) => `
-                    <figure class="segment-line">
-                        <figcaption>${index + 1}</figcaption>
-                        <img src="${src}" alt="Страница ${page.page}, строка ${index + 1}">
-                    </figure>
-                `).join("")}
-            </section>
-        `).join("");
+        renderSegmentsPreview(data.pages || []);
     } catch (error) {
+        if (requestId !== segmentationRequestId) {
+            return;
+        }
         segmentationStatus.textContent = "";
-        showError(error.message);
+        showRequestError(error);
     } finally {
-        previewSegmentsBtn.disabled = false;
+        if (requestId === segmentationRequestId) {
+            previewSegmentsBtn.disabled = false;
+        }
     }
 }
 
 async function initAuth() {
     const response = await fetch("/api/auth/config");
-    authConfig = await response.json();
+    authConfig = await readJsonResponse(response, "Не удалось загрузить настройки авторизации.");
 
     if (!authConfig.enabled) {
         return;
@@ -155,10 +317,10 @@ async function initAuth() {
 
     const meResponse = await fetch("/api/me");
     if (meResponse.status === 401) {
-        window.location.href = "/login";
-        return;
+        redirectToLogin();
+        throw new AuthRedirectError();
     }
-    const user = await meResponse.json();
+    const user = await readJsonResponse(meResponse, "Не удалось загрузить профиль.");
     accountName.textContent = user.display_name || user.username;
     accountLogin.textContent = user.username;
 }
@@ -183,7 +345,11 @@ previewSegmentsBtn.addEventListener("click", previewSegments);
 
 imageInput.addEventListener("change", async () => {
     syncSegmentationLabels();
-    segmentsPreview.innerHTML = "";
+    segmentationRequestId += 1;
+    textInput.value = "";
+    ocrStatus.textContent = "";
+    clearDetectionResult();
+    clearElement(segmentsPreview);
     segmentationStatus.textContent = "";
     if (isPreviewableImage(imageInput.files[0])) {
         segmentationPanel.classList.remove("hidden");
@@ -191,6 +357,13 @@ imageInput.addEventListener("change", async () => {
     } else {
         segmentationPanel.classList.add("hidden");
     }
+});
+
+textInput.addEventListener("input", () => {
+    detectRequestId += 1;
+    detectInProgress = false;
+    clearDetectionResult();
+    syncDetectButtonState();
 });
 
 ocrForm.addEventListener("submit", async (event) => {
@@ -203,6 +376,8 @@ ocrForm.addEventListener("submit", async (event) => {
 
     const formData = new FormData();
     formData.append("image", imageInput.files[0]);
+    const requestId = ++ocrRequestId;
+    clearDetectionResult();
     setLoading(ocrStatus, "Распознаём файл с выбранными параметрами сегментации...");
 
     try {
@@ -210,21 +385,32 @@ ocrForm.addEventListener("submit", async (event) => {
             method: "POST",
             body: formData,
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Ошибка OCR");
 
         if (!response.ok) {
             throw new Error(data.detail || "Ошибка OCR");
+        }
+        if (requestId !== ocrRequestId) {
+            return;
         }
 
         textInput.value = data.text || "";
         setLoading(ocrStatus, "Готово. Проверьте текст и исправьте OCR-ошибки.");
     } catch (error) {
+        if (requestId !== ocrRequestId) {
+            return;
+        }
         setLoading(ocrStatus, "");
-        showError(error.message);
+        showRequestError(error);
     }
 });
 
 detectBtn.addEventListener("click", async () => {
+    if (!detectorReady) {
+        showError("Детектор ещё загружается. Подождите завершения предзагрузки.");
+        return;
+    }
+
     const text = textInput.value.trim();
 
     if (text.length < 20) {
@@ -232,8 +418,9 @@ detectBtn.addEventListener("click", async () => {
         return;
     }
 
-    detectBtn.disabled = true;
-    detectBtn.textContent = "Проверяем...";
+    const requestId = ++detectRequestId;
+    detectInProgress = true;
+    syncDetectButtonState();
 
     try {
         const response = await apiFetch("/api/detect", {
@@ -241,26 +428,33 @@ detectBtn.addEventListener("click", async () => {
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({text}),
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Ошибка детекции");
 
         if (!response.ok) {
             throw new Error(data.detail || "Ошибка детекции");
+        }
+        if (requestId !== detectRequestId) {
+            return;
         }
 
         currentResult = data;
         renderResult(data);
     } catch (error) {
-        showError(error.message);
+        if (requestId !== detectRequestId) {
+            return;
+        }
+        showRequestError(error);
     } finally {
-        detectBtn.disabled = false;
-        detectBtn.textContent = "Проверить на AI-генерацию";
+        if (requestId === detectRequestId) {
+            detectInProgress = false;
+            syncDetectButtonState();
+        }
     }
 });
 
 clearBtn.addEventListener("click", () => {
-    textInput.value = "";
-    currentResult = null;
-    resultCard.classList.add("hidden");
+    clearOcrState({clearFile: true});
+    syncDetectButtonState();
 });
 
 classSelect.addEventListener("change", () => fillStudents(classSelect.value));
@@ -288,7 +482,7 @@ classImportForm.addEventListener("submit", async (event) => {
             method: "POST",
             body: formData,
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Не удалось импортировать CSV.");
         if (!response.ok) {
             throw new Error(data.detail || "Не удалось импортировать CSV.");
         }
@@ -300,7 +494,7 @@ classImportForm.addEventListener("submit", async (event) => {
         await loadJournal();
     } catch (error) {
         classImportStatus.textContent = "";
-        showError(error.message);
+        showRequestError(error);
     }
 });
 
@@ -328,7 +522,7 @@ saveGradeForm.addEventListener("submit", async (event) => {
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify(payload),
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Не удалось сохранить оценку.");
         if (!response.ok) {
             throw new Error(data.detail || "Не удалось сохранить оценку.");
         }
@@ -337,7 +531,7 @@ saveGradeForm.addEventListener("submit", async (event) => {
         await loadJournal();
     } catch (error) {
         saveStatus.textContent = "";
-        showError(error.message);
+        showRequestError(error);
     }
 });
 
@@ -359,7 +553,7 @@ manualGradeForm.addEventListener("submit", async (event) => {
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify(payload),
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Не удалось добавить оценку.");
         if (!response.ok) {
             throw new Error(data.detail || "Не удалось добавить оценку.");
         }
@@ -369,7 +563,7 @@ manualGradeForm.addEventListener("submit", async (event) => {
         await loadJournal();
     } catch (error) {
         manualSaveStatus.textContent = "";
-        showError(error.message);
+        showRequestError(error);
     }
 });
 
@@ -384,7 +578,7 @@ function renderResult(data) {
 
 async function loadClasses() {
     const response = await apiFetch("/api/classes");
-    const items = await response.json();
+    const items = await readJsonResponse(response, "Не удалось загрузить классы.");
     if (!response.ok) {
         throw new Error(items.detail || "Не удалось загрузить классы.");
     }
@@ -428,7 +622,7 @@ async function loadJournal() {
         date_to: journalDateToInput.value,
     });
     const response = await apiFetch(`/api/journal/${journalClassSelect.value}?${params.toString()}`);
-    const data = await response.json();
+    const data = await readJsonResponse(response, "Журнал недоступен.");
     if (!response.ok) {
         journalEl.innerHTML = `<p class="muted">${escapeHtml(data.detail || "Журнал недоступен.")}</p>`;
         return;
@@ -508,7 +702,7 @@ function riskClass(grade) {
 
 async function openEssay(resultId) {
     const response = await apiFetch(`/api/results/${resultId}`);
-    const data = await response.json();
+    const data = await readJsonResponse(response, "Не удалось открыть сочинение.");
     if (!response.ok) {
         showError(data.detail || "Не удалось открыть сочинение.");
         return;
@@ -560,6 +754,8 @@ function escapeHtml(value) {
 
 async function init() {
     syncSegmentationLabels();
+    syncDetectButtonState();
+    startModelStatusPolling();
     workDateInput.value = todayIso();
     manualWorkDateInput.value = todayIso();
     journalDateToInput.value = todayIso();
@@ -569,4 +765,4 @@ async function init() {
     await loadJournal();
 }
 
-init().catch((error) => showError(error.message));
+init().catch((error) => showRequestError(error));

@@ -6,5 +6,6 @@ __pycache__
 
 data
 hf-cache
+models
 
 .env
