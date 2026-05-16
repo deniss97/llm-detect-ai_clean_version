@@ -4,7 +4,7 @@
 2. `/api/ocr` распознаёт текст через TrOCR;
 3. текст можно исправить в интерфейсе;
 4. `/api/detect` отправляет исправленный текст в лёгкий локальный детектор;
-5. результат сохраняется в SQLite: `id`, `text`, `ai_probability`, `ai_percent`, `verdict`, `confidence`.
+5. результат сохраняется в PostgreSQL: `id`, `text`, `ai_probability`, `ai_percent`, `verdict`, `confidence`.
 
 ## Что используется
 
@@ -47,7 +47,7 @@ ENSEMBLE_QWEN_ADAPTER_PATH=./models/r_detect_qwen3
 ENSEMBLE_T_LITE_ADAPTER_PATH=./models/r_detect_t_lite_v2
 ```
 
-По умолчанию ансамбль усредняет доступные detection-score с весами из `MODEL_ZOO.md`. Embedding-модель `r_embed_final` подключается как KNN по embedding-пространству: reference-база берётся из `./datasets/final_prepared/final_train.csv`, а вероятность AI считается по меткам ближайших соседей. Когда embedding-score включён, `ENSEMBLE_USE_META_LEARNER=true` загружает `./models/meta_learner_3models.pkl` через scikit-learn и использует его `predict_proba`.
+Ансамбль усредняет score с весами из `MODEL_ZOO.md`. Embedding-модель `r_embed_final` подключается как KNN по embedding-пространству: reference-база берётся из `./datasets/final_prepared/final_train.csv`, а вероятность AI считается по меткам ближайших соседей. Когда embedding-score включён, `ENSEMBLE_USE_META_LEARNER=true` загружает `./models/meta_learner_3models.pkl` через scikit-learn и использует его `predict_proba`.
 
 ## Предзагрузка модели
 

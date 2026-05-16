@@ -19,6 +19,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
+По умолчанию приложение использует PostgreSQL. Для запуска без Docker поднимите локальный PostgreSQL и укажите `DATABASE_URL`, например:
+
+```env
+DATABASE_URL=postgresql+psycopg://ai_detector:ai_detector@localhost:5432/ai_detector
+```
+
 OCR-модель по умолчанию: `cyrillic-trocr/trocr-handwritten-cyrillic`. При первом распознавании она скачивается из Hugging Face. PDF-файлы распознаются постранично: приложение рендерит страницы в изображения и затем запускает тот же TrOCR-пайплайн. Ограничения задаются переменными `PDF_MAX_PAGES` и `PDF_RENDER_DPI`.
 
 Первый запуск OCR может выглядеть как долгий запрос в браузере, потому что скачивается `model.safetensors`. Чтобы не ждать внутри интерфейса, заранее выполните предзагрузку из раздела ниже.
@@ -126,6 +132,8 @@ TEACHER_ROLE="teacher"
 ```bash
 docker compose up --build
 ```
+
+Docker Compose поднимает PostgreSQL, Keycloak и web-сервис. PostgreSQL доступен внутри compose-сети как `postgres:5432`, а с хоста как `localhost:5432`.
 
 Сервис будет доступен на http://127.0.0.1:8000
 

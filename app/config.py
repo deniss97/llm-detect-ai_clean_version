@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "AI Text Detector Service"
-    database_url: str = "sqlite:///./data/results.db"
+    database_url: str = "postgresql+psycopg://ai_detector:ai_detector@postgres:5432/ai_detector"
 
     ocr_model_name: str = "cyrillic-trocr/trocr-handwritten-cyrillic"
     ocr_model_local_files_only: bool = False
