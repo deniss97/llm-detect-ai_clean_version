@@ -1,4 +1,15 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: ai-detector-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: postgres:16-alpine
     container_name: ai-detector-postgres
@@ -40,6 +51,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       keycloak:
         condition: service_started
     gpus: all
@@ -54,13 +67,67 @@ services:
       KEYCLOAK_AUDIENCE: ""
       ADMIN_USERNAMES: "admin.teacher,admin.teacher@example.test"
       DATABASE_URL: "postgresql+psycopg://ai_detector:ai_detector@postgres:5432/ai_detector"
+      REDIS_URL: "redis://redis:6379/0"
       HF_HOME: /root/.cache/huggingface
       HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
       HF_HUB_DISABLE_XET: "1"
       HF_HUB_ENABLE_HF_TRANSFER: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     volumes:
       - ./hf-cache:/root/.cache/huggingface
       - ./models:/app/models
+
+  ai-detector-worker:
+    build: .
+    container_name: ai-detector-worker
+    hostname: ai-detector-worker
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    gpus: all
+    env_file:
+      - .env
+    environment:
+      AUTH_ENABLED: "true"
+      KEYCLOAK_PUBLIC_BASE_URL: "http://localhost:8080"
+      KEYCLOAK_INTERNAL_BASE_URL: "http://keycloak:8080"
+      KEYCLOAK_REALM: "school"
+      KEYCLOAK_CLIENT_ID: "ai-detector-web"
+      KEYCLOAK_AUDIENCE: ""
+      ADMIN_USERNAMES: "admin.teacher,admin.teacher@example.test"
+      DATABASE_URL: "postgresql+psycopg://ai_detector:ai_detector@postgres:5432/ai_detector"
+      REDIS_URL: "redis://redis:6379/0"
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
+      HF_HUB_DISABLE_XET: "1"
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app.celery_app inspect ping -d celery@ai-detector-worker --timeout=5 | grep -q OK"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - ./hf-cache:/root/.cache/huggingface
+      - ./models:/app/models
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ai-detector-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      ai-detector-web:
+        condition: service_healthy
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   postgres-data:

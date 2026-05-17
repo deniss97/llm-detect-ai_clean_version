@@ -133,9 +133,80 @@ TEACHER_ROLE="teacher"
 docker compose up --build
 ```
 
-Docker Compose поднимает PostgreSQL, Keycloak и web-сервис. PostgreSQL доступен внутри compose-сети как `postgres:5432`, а с хоста как `localhost:5432`.
+Docker Compose поднимает PostgreSQL, Keycloak, Redis, FastAPI web-сервис, отдельный Celery worker и Nginx.
 
-Сервис будет доступен на http://127.0.0.1:8000
+Схема контейнеров:
+
+- `nginx` - внешняя точка входа, слушает `localhost:80` и проксирует запросы в FastAPI;
+- `ai-detector-web` - FastAPI backend, авторизация Keycloak, REST API и UI;
+- `ai-detector-worker` - отдельный inference-слой для тяжёлых OCR и AI-detection задач;
+- `redis` - брокер очереди Celery, доступен внутри compose-сети как `redis:6379`;
+- `postgres` - основная БД SQLAlchemy, хранит результаты, журнал и таблицу `jobs`;
+- `keycloak` - авторизация пользователей и роли.
+
+PostgreSQL доступен внутри compose-сети как `postgres:5432`, а с хоста как `localhost:5432`.
+
+Основной адрес приложения через reverse proxy:
+
+```text
+http://localhost/
+```
+
+Прямой порт FastAPI `8000` оставлен для отладки:
+
+```text
+http://127.0.0.1:8000
+```
+
+Проверка health endpoint:
+
+```bash
+curl http://localhost/api/health
+```
+
+### Асинхронные задачи OCR и AI-детекции
+
+Тяжёлые операции теперь можно запускать через очередь. FastAPI создаёт запись в таблице `jobs`, отправляет задачу в Celery через Redis, а worker выполняет OCR или detector inference и обновляет статус в PostgreSQL.
+
+Статусы задач:
+
+- `queued` - задача создана и отправлена в очередь;
+- `running` - worker начал выполнение;
+- `finished` - задача завершилась, поле `result` содержит результат;
+- `failed` - задача завершилась ошибкой, поле `error_message` содержит текст ошибки.
+
+Пример async detect job:
+
+```bash
+curl -X POST http://localhost/api/detect/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Это пример достаточно длинного текста для проверки через асинхронную очередь."}'
+```
+
+Ответ содержит `job_id`:
+
+```json
+{
+  "job_id": 1,
+  "status": "queued",
+  "task_type": "detect"
+}
+```
+
+Проверка статуса:
+
+```bash
+curl http://localhost/api/jobs/1
+```
+
+Пример async OCR job:
+
+```bash
+curl -X POST http://localhost/api/ocr/jobs \
+  -F "image=@essay.pdf"
+```
+
+Синхронные endpoints `/api/ocr` и `/api/detect` сохранены для совместимости.
 
 ## Модель детекции
 

@@ -20,7 +20,7 @@ class Base(DeclarativeBase):
 
 
 def init_db() -> None:
-    from app.models import DetectionResult, GradeEntry, SchoolClass, Student  # noqa: F401
+    from app.models import DetectionResult, GradeEntry, Job, SchoolClass, Student  # noqa: F401
     Base.metadata.create_all(bind=engine)
     ensure_school_class_access_columns()
 
@@ -43,7 +43,7 @@ def ensure_school_class_access_columns() -> None:
         connection.execute(text("UPDATE school_classes SET access_key = name WHERE access_key IS NULL"))
 
 
-def get_db():
+async def get_db():
     db = SessionLocal()
     try:
         yield db

@@ -27,7 +27,7 @@ from sqlalchemy import or_
 from app.config import settings
 from app.database import get_db, init_db
 from app.database import SessionLocal
-from app.models import DetectionResult, GradeEntry, SchoolClass, Student
+from app.models import DetectionResult, GradeEntry, Job, SchoolClass, Student
 from app.schemas import (
     AuthConfigResponse,
     ClassImportResponse,
@@ -37,6 +37,8 @@ from app.schemas import (
     GradeCreateRequest,
     GradeResponse,
     HealthResponse,
+    JobCreateResponse,
+    JobResponse,
     JournalResponse,
     JournalStudentResponse,
     OCRResponse,
@@ -45,6 +47,7 @@ from app.schemas import (
     StudentResponse,
     UserResponse,
 )
+from app.services.detection import build_detection_result, validate_detection_text
 from app.services.detector import Detector, build_detector
 from app.services.ocr import (
     get_recognizer,
@@ -53,6 +56,7 @@ from app.services.ocr import (
     segment_image_previews,
     segment_pdf_previews,
 )
+from app.tasks import run_detection_job, run_ocr_job
 
 
 logging.basicConfig(level=logging.INFO)
@@ -333,7 +337,7 @@ def token_to_current_user(token: str) -> CurrentUser:
     )
 
 
-def get_current_user(
+async def get_current_user(
     request: Request,
     response: Response,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
@@ -608,13 +612,15 @@ def seed_demo_data() -> None:
 
 
 def normalize_text(text: str) -> str:
-    return " ".join(text.replace("\r", "\n").split())
+    from app.services.detection import normalize_text as normalize
+
+    return normalize(text)
 
 
 def make_verdict(probability: float) -> tuple[str, float]:
-    if probability >= settings.threshold:
-        return "AI_GENERATED", probability
-    return "HUMAN_WRITTEN", 1.0 - probability
+    from app.services.detection import make_verdict as verdict
+
+    return verdict(probability)
 
 
 def to_response(row: DetectionResult) -> DetectResponse:
@@ -627,6 +633,48 @@ def to_response(row: DetectionResult) -> DetectResponse:
         confidence=row.confidence,
         created_at=row.created_at,
     )
+
+
+def job_to_response(row: Job) -> JobResponse:
+    return JobResponse(
+        id=row.id,
+        task_id=row.task_id,
+        task_type=row.task_type,
+        status=row.status,
+        result=row.result_json,
+        error_message=row.error_message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def create_job(db: Session, task_type: str) -> Job:
+    job = Job(task_type=task_type, status="queued")
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def store_task_id(db: Session, job: Job, task_id: str | None) -> None:
+    job.task_id = task_id
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+
+def enqueue_ocr_job(
+    job_id: int,
+    file_base64: str,
+    filename: str,
+    content_type: str,
+    line_options: dict[str, Any],
+):
+    return run_ocr_job.delay(job_id, file_base64, filename, content_type, line_options)
+
+
+def enqueue_detection_job(job_id: int, text: str):
+    return run_detection_job.delay(job_id, text)
 
 
 def grade_to_response(row: GradeEntry) -> GradeResponse:
@@ -793,7 +841,7 @@ def me(user: CurrentUser = Depends(get_current_user)):
 
 
 @app.get("/api/health", response_model=HealthResponse)
-def health():
+async def health():
     return HealthResponse(status="ok", detector_mode=detector.mode if detector else "not_loaded")
 
 
@@ -1063,6 +1111,57 @@ async def ocr_image(
     return OCRResponse(text=text)
 
 
+@app.post("/api/ocr/jobs", response_model=JobCreateResponse)
+async def create_ocr_job(
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+    min_line_height: int | None = None,
+    line_threshold_ratio: float | None = None,
+    line_padding: int | None = None,
+):
+    file_bytes = await image.read()
+    if len(file_bytes) > settings.upload_max_bytes:
+        raise HTTPException(status_code=413, detail="Файл слишком большой.")
+
+    content_type = image.content_type or ""
+    filename = image.filename or ""
+    lower_filename = filename.lower()
+    is_pdf = content_type == "application/pdf" or lower_filename.endswith(".pdf")
+    is_image = content_type.startswith("image/") or lower_filename.endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+    )
+    if not is_pdf and not is_image:
+        raise HTTPException(status_code=400, detail="Загрузите изображение или PDF-файл.")
+
+    line_options = {
+        "min_line_height": min_line_height if min_line_height is not None else settings.ocr_min_line_height,
+        "line_threshold_ratio": (
+            line_threshold_ratio
+            if line_threshold_ratio is not None
+            else settings.ocr_line_threshold_ratio
+        ),
+        "line_padding": line_padding if line_padding is not None else settings.ocr_line_padding,
+    }
+    job = create_job(db, "ocr")
+    try:
+        async_result = enqueue_ocr_job(
+            job.id,
+            base64.b64encode(file_bytes).decode("ascii"),
+            filename,
+            content_type,
+            line_options,
+        )
+        store_task_id(db, job, getattr(async_result, "id", None))
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = str(exc)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Не удалось отправить OCR-задачу в очередь.") from exc
+
+    return JobCreateResponse(job_id=job.id, status=job.status, task_type=job.task_type)
+
+
 @app.post("/api/ocr/segment", response_model=OCRSegmentResponse)
 async def segment_ocr_image(
     image: UploadFile = File(...),
@@ -1120,32 +1219,53 @@ def detect_text(
     detector_service: Detector = Depends(get_detector),
     user: CurrentUser = Depends(get_current_user),
 ):
-    text = normalize_text(payload.text)
+    try:
+        text = validate_detection_text(payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if len(text) < 20:
-        raise HTTPException(status_code=400, detail="Текст слишком короткий для проверки.")
-    if len(text) > settings.max_text_length:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Текст слишком длинный. Максимум: {settings.max_text_length} символов.",
-        )
-
-    probability = detector_service.predict_probability(text)
-    verdict, confidence = make_verdict(probability)
-
-    row = DetectionResult(
-        text=text,
-        ai_probability=probability,
-        ai_percent=round(probability * 100, 2),
-        verdict=verdict,
-        confidence=round(confidence, 4),
-        source="image_ocr_or_manual",
-    )
+    row = build_detection_result(text, detector_service)
     db.add(row)
     db.commit()
     db.refresh(row)
 
     return to_response(row)
+
+
+@app.post("/api/detect/jobs", response_model=JobCreateResponse)
+async def create_detect_job(
+    payload: DetectRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        text = validate_detection_text(payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    job = create_job(db, "detect")
+    try:
+        async_result = enqueue_detection_job(job.id, text)
+        store_task_id(db, job, getattr(async_result, "id", None))
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = str(exc)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Не удалось отправить задачу детекции в очередь.") from exc
+
+    return JobCreateResponse(job_id=job.id, status=job.status, task_type=job.task_type)
+
+
+@app.get("/api/jobs/{job_id}", response_model=JobResponse)
+async def get_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена.")
+    return job_to_response(job)
 
 
 @app.get("/api/results", response_model=list[ResultResponse])

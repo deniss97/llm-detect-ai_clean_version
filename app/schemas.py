@@ -32,6 +32,23 @@ class DetectResponse(BaseModel):
     created_at: datetime
 
 
+class JobCreateResponse(BaseModel):
+    job_id: int
+    status: str
+    task_type: str
+
+
+class JobResponse(BaseModel):
+    id: int
+    task_id: str | None
+    task_type: str
+    status: str
+    result: dict | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ResultResponse(DetectResponse):
     source: str
 

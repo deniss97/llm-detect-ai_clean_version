@@ -4,6 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "AI Text Detector Service"
     database_url: str = "postgresql+psycopg://ai_detector:ai_detector@postgres:5432/ai_detector"
+    redis_url: str = "redis://redis:6379/0"
+    celery_broker_url: str | None = None
+    celery_result_backend: str | None = None
 
     ocr_model_name: str = "cyrillic-trocr/trocr-handwritten-cyrillic"
     ocr_model_local_files_only: bool = False
